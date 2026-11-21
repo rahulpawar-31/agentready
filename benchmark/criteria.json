@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "toolset_version": "1",
+  "step_limit": 10,
+  "max_turns": 24,
+  "note": "Written before any benchmark run. The runner refuses to start unless this file and the site label are committed and unmodified, and it records this file's SHA-256 with every run. Success is judged by code against the hand label, never by the model.",
+  "tasks": {
+    "main_info": {
+      "success": "The agent submits a URL on the verified host that matches a hand-labelled page, and a quote of at least 8 characters that appears in the page text the agent was shown for that URL.",
+      "failure": "A different page, no answer, no quote or a quote that is not on the page shown, the step limit reached without an answer, or a block by a CAPTCHA or login."
+    },
+    "contact_form": {
+      "success": "The agent submits a URL that matches a hand-labelled contact page and names every required field (case and punctuation ignored; any accepted alias counts).",
+      "failure": "A different page, no answer, a required field missing, the step limit reached without an answer, or a block by a CAPTCHA or login."
+    },
+    "docs_api": {
+      "success": "The agent submits a URL that matches a hand-labelled docs or API page, or states that none exists when the label says none.",
+      "failure": "A different page, a wrong claim that none exists, no answer, the step limit reached without an answer, or a block by a CAPTCHA or login."
+    }
+  },
+  "invalid_runs": "A run that ends because the LLM call failed is invalid, not a failure. It is recorded and must be rerun."
+}
