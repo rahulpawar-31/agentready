@@ -657,3 +657,12 @@ Write each test fully against the pattern in `tests/test_api.py` (the stubs abov
 1. Deterministic generators, no LLM (assumed).
 2. Bearer report id as the approval credential for the MVP (assumed).
 3. Whether the owner also wants a "download all approved" action. Not in this plan.
+
+---
+
+## Corrections found while building (the code and tests follow these, not the text above)
+1. `test_site_text_cannot_inject_headings_or_links`: asserting `"evil.test"` is absent from the link lines was wrong, because harmless plain link text can contain it. The test checks link *targets* (only `https://x.test/a`) and that the only `## ` line is `## Pages`.
+2. `test_snippet_cannot_be_broken_out_of`: a raw `</script>` inside `<title>` is parsed as a tag by `html.parser`, so the title is entity-encoded in the test, and a second test calls `json_ld_snippet` directly with `</script>`, `&` and U+2028 in the data.
+3. `test_json_ld_diff_inserts_before_head_close_and_leaves_the_rest`: the `and ... or ...` assertion could never fail, and "no removed lines" cannot hold for one-line (minified) HTML. The clean-insert test uses a multi-line page; a separate test covers minified HTML, where the one long line is shown replaced.
+4. `test_fixes_no_write_path.py`: banning any call named `compile` flagged `re.compile`; builtins (`open`, `exec`, `eval`, `compile`, `__import__`) are now banned by bare name and file or process methods by attribute. `from urllib import request` also slipped past the import check; imported names are now joined with their module. The checker has its own test.
+5. Additions beyond the plan: an `/llms.txt` that could not be fetched is skipped with "could not reach" instead of being proposed as missing; `find_secrets` also scans the diff (it carries lines of the site's own HTML), at proposal and at export; a diff over 100,000 characters is skipped ("too large to review"); `insert_before_head_close` puts the snippet on its own lines when `</head>` starts a line and splits the line otherwise; link URLs are percent-encoded so a Markdown link cannot be broken by spaces or parentheses and are rewritten to the origin's scheme; OpenAPI paths that are not plain URL paths and `$ref` parameters are skipped.
