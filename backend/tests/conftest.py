@@ -1,3 +1,9 @@
+import os
+
+os.environ.setdefault("AGENTREADY_DEV", "1")     # main.py fails closed without a secret
+
+import pytest
+
 from app.models import Page
 
 
@@ -20,3 +26,11 @@ class FakeFetcher:
     def get(self, url, *, rendered=False, address=None):
         self.calls.append((url, rendered))
         return self.pages.get(url) or Page(url, 404, {}, "")
+
+
+@pytest.fixture(autouse=True)
+def _clear_api_overrides():
+    """Dependency overrides are global state on the FastAPI app: never leak them between tests."""
+    yield
+    from app import main
+    main.app.dependency_overrides.clear()

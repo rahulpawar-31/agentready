@@ -23,3 +23,19 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 pytest
 ```
+
+## Running the API
+
+The API refuses to start without a secret, because a guessable default would make every ownership token predictable.
+
+```bash
+cd backend
+export AGENTREADY_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+uvicorn app.main:app --port 8000
+```
+
+For local development only, `AGENTREADY_DEV=1` uses a fixed development secret instead (the tests set it).
+Other settings: `AGENTREADY_CACHE` (cache directory, default `.cache`).
+
+Sites on a non-default port can only be verified with the meta tag (inside `<head>` on the home page), because
+a DNS TXT record proves control of a name, not of a service on a port.

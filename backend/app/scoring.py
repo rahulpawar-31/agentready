@@ -18,3 +18,8 @@ def category_scores(findings) -> dict:
     for f in _scored(findings):
         groups.setdefault(f.category.value, []).append(f)
     return {name: score(fs) for name, fs in groups.items()}
+
+
+def is_scored(findings) -> bool:
+    """True when at least one finding counts towards the score (reachable and weight > 0)."""
+    return any(f.weight > 0 for f in _scored(findings))

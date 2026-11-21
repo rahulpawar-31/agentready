@@ -50,3 +50,4 @@ class Report:
     category_scores: dict
     findings: list
     unscored: int        # findings excluded from the score because the page was unreachable
+    score_status: str = "scored"     # "not_scored" when nothing could be scored (then score is 0)

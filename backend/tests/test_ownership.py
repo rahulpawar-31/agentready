@@ -1,3 +1,4 @@
+import pytest
 from app.fetch import GuardedFetcher
 from app.models import Page
 from app.ownership import make_token, verify_ownership
@@ -61,7 +62,7 @@ def test_probe_does_not_follow_a_redirect_to_another_domain():
 
 
 def test_probe_validates_an_on_domain_redirect_before_following_it():
-    meta = f'<meta name="agentready-verification" content="{TOKEN}">'
+    meta = f'<html><head><meta name="agentready-verification" content="{TOKEN}"></head></html>'
     inner = Scripted({
         "https://x.test/": Page("https://x.test/", 301, {"location": "/home"}, ""),
         "https://x.test/home": Page("https://x.test/home", 200, {}, meta),
@@ -76,3 +77,38 @@ def test_probe_to_a_host_with_a_non_public_address_sends_no_request():
     g = GuardedFetcher(inner, "x.test", sleep=lambda s: None, resolver=lambda h: ["10.0.0.5"])
     assert verify_ownership("x.test", TOKEN, g, lambda name: []).verified is False
     assert inner.calls == []
+
+
+META = f'<meta name="agentready-verification" content="{TOKEN}">'
+
+
+@pytest.mark.parametrize("wrapper", [
+    "<body>{m}</body>", "<p>{m}</p>", "<textarea>{m}</textarea>", "<title>{m}</title>",
+    "<template>{m}</template>", "<noscript>{m}</noscript>", "<!-- {m} -->", "<script>{m}</script>"])
+def test_a_meta_tag_outside_head_does_not_verify(wrapper):
+    html = "<html><head></head>" + wrapper.format(m=META) + "</html>"
+    f = FakeFetcher({"https://x.test/": page("https://x.test/", html)})
+    assert verify_ownership("x.test", TOKEN, f, lambda name: []).verified is False
+
+
+def test_a_meta_tag_in_head_verifies_even_with_surrounding_whitespace():
+    html = f'<html><head><meta name="agentready-verification" content="  {TOKEN}\n"></head></html>'
+    f = FakeFetcher({"https://x.test/": page("https://x.test/", html)})
+    assert verify_ownership("x.test", TOKEN, f, lambda name: []).method == "meta"
+
+
+def test_txt_values_are_stripped_before_comparison():
+    r = verify_ownership("x.test", TOKEN, FakeFetcher({}), lambda name: [f"  agentready-verify={TOKEN} \n"])
+    assert r.method == "dns"
+
+
+def test_dns_can_be_disabled_and_the_dns_name_is_explicit():
+    names = []
+    def txt(name):
+        names.append(name)
+        return [f"agentready-verify={TOKEN}"]
+    f = FakeFetcher({})
+    r = verify_ownership("x.test:8443", TOKEN, f, txt, dns_name="_agentready.x.test", allow_dns=False)
+    assert r.verified is False and names == [] and f.calls == [("https://x.test:8443/", False)]
+    r = verify_ownership("x.test", TOKEN, FakeFetcher({}), txt, dns_name="_agentready.x.test")
+    assert r.method == "dns" and names == ["_agentready.x.test"]

@@ -30,15 +30,19 @@ def _same(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())
 
 
-def verify_ownership(domain, token, fetcher: Fetcher, txt_lookup=default_txt_lookup) -> Ownership:
+def verify_ownership(domain, token, fetcher: Fetcher, txt_lookup=default_txt_lookup, *,
+                     dns_name: str | None = None, allow_dns: bool = True) -> Ownership:
+    """`domain` is host[:port] (used for the root-page probe). `dns_name` is the TXT name to query
+    (hostname only); `allow_dns` is False for non-default ports, where only the meta tag counts."""
     expected = f"agentready-verify={token}"
-    for txt in txt_lookup(f"_agentready.{domain}"):
-        if _same(txt, expected):
-            return Ownership(True, "dns")
+    if allow_dns:
+        for txt in txt_lookup(dns_name or f"_agentready.{domain}"):
+            if _same(txt.strip(), expected):
+                return Ownership(True, "dns")
     home = fetcher.get(f"https://{domain}/")
     if home.status == 200:
         soup = BeautifulSoup(home.body, "html.parser")
         for m in soup.find_all("meta", attrs={"name": "agentready-verification"}):
-            if _same(m.get("content", ""), token):
+            if m.parent is not None and m.parent.name == "head" and _same(str(m.get("content", "")).strip(), token):
                 return Ownership(True, "meta")
     return Ownership(False, "")
