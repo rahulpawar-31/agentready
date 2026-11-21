@@ -1,11 +1,13 @@
 """Validators. Each returns a list of problems; an empty list means the output is valid."""
+import ast
 import json
 import re
 from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
-from .models import LLMS_MAX_BYTES
+from .generate import _tools_from_spec, build_mcp_stub, tools_from_stub
+from .models import LLMS_MAX_BYTES, STUB_MAX_BYTES, NotEnoughContent
 
 _LINK_LINE = re.compile(r"^- \[[^\[\]]+\]\((https?://[^)\s]+)\)$")
 _ANY_LINK = re.compile(r"\]\(([^)]*)\)")
@@ -73,4 +75,49 @@ def validate_json_ld_snippet(snippet: str) -> list[str]:
         problems.append("@context must be a https://schema.org URL")
     if not isinstance(data.get("@type"), str) or not data["@type"].strip():
         problems.append("@type is missing")
+    return problems
+
+
+_STUB_IMPORTS = {"json", "urllib.parse", "urllib.request"}
+
+
+def validate_mcp_stub(source: str, spec: dict, origin: str) -> list[str]:
+    problems = []
+    if len(source.encode("utf-8")) > STUB_MAX_BYTES:
+        problems.append(f"larger than {STUB_MAX_BYTES} bytes")
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return problems + ["not valid Python"]
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            if any(a.name not in _STUB_IMPORTS for a in node.names):
+                problems.append("imports a module outside json and urllib")
+        elif isinstance(node, ast.Expr):
+            if not isinstance(node.value, ast.Constant):
+                problems.append("runs code at import time")
+        elif not isinstance(node, (ast.Assign, ast.FunctionDef)):
+            problems.append("a top-level statement other than an import, assignment or function")
+    base_url = [n.value.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                and len(n.targets) == 1 and getattr(n.targets[0], "id", "") == "BASE_URL"]
+    if base_url != [origin]:
+        problems.append("BASE_URL is not the verified origin")
+    try:
+        tools = tools_from_stub(source)
+        expected = _tools_from_spec(spec)
+    except ValueError as e:                     # NotEnoughContent is a ValueError too
+        return problems + [str(e) or "cannot read the tool list"]
+    for t in tools:
+        if t.get("method") != "GET":
+            problems.append("a tool is not a GET")
+            break
+    if any(not isinstance(t.get("name"), str) or not t["name"].isidentifier() for t in tools):
+        problems.append("a tool name is not an identifier")
+    if sorted((t.get("name"), t.get("path")) for t in tools) != sorted((t["name"], t["path"]) for t in expected):
+        problems.append("the tools do not match the GET operations in the OpenAPI document")
+    try:
+        if source != build_mcp_stub(origin, spec):
+            problems.append("the file differs from what the generator produces")
+    except NotEnoughContent:
+        pass
     return problems
