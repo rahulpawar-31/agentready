@@ -29,7 +29,7 @@ def test_success_path():
 
 def test_hallucinated_quote_fails():
     r, *_ = run([[tool("submit_answer", url="/pricing", quote="Plans start at $5 per month")]])
-    assert (r.success, r.reason) == (False, "quote_not_on_page")        # never fetched, so nothing was shown
+    assert (r.success, r.reason) == (False, "not_visited")              # never fetched, so no answer page was visited
 
 
 def test_tool_results_go_back_to_the_model_with_matching_ids():
