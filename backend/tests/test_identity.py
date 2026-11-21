@@ -35,3 +35,42 @@ def test_spec_with_security_scheme_passes_both():
 
 def test_non_openapi_json_is_ignored():
     assert not run("/openapi.json", {"hello": "world"})["openapi_public"].passed
+
+
+# --- Phase 1 review fixes ---------------------------------------------------
+import pytest
+
+
+def raw(path, body):
+    return {f"{B}{path}": page(f"{B}{path}", body)}
+
+
+@pytest.mark.parametrize("body", [
+    '{"openapi":"3","components":null}', '{"openapi":"3","components":"x"}',
+    '{"openapi":"3","components":{"securitySchemes":["a"]}}',
+    '{"openapi":"3","components":{"securitySchemes":{"a":"x"}}}',
+    '{"openapi":"3","components":{"securitySchemes":{"a":null,"b":[1]}}}',
+    '{"swagger":"2","securityDefinitions":"nope"}', "[" * 200000])
+def test_hostile_or_odd_documents_do_not_crash_the_check(body):
+    r = {f.check_id: f for f in identity.run(Site(B, FakeFetcher(raw("/openapi.json", body))))}
+    assert set(r) == {"openapi_public", "auth_declared"} and not r["auth_declared"].passed
+
+
+def test_scheme_types_in_evidence_are_clipped_and_cleaned():
+    spec = {"openapi": "3", "components": {"securitySchemes": {"k": {"type": "x\n" + "y" * 300}}}}
+    r = {f.check_id: f for f in identity.run(Site(B, FakeFetcher(raw("/openapi.json", json.dumps(spec)))))}
+    assert r["auth_declared"].passed and "y" * 81 not in r["auth_declared"].evidence
+    assert "\n" not in r["auth_declared"].evidence
+
+
+@pytest.mark.parametrize("status", [0, 503])
+def test_if_some_standard_paths_could_not_be_fetched_absence_is_low_confidence(status):
+    pages = {f"{B}/swagger.json": page(f"{B}/swagger.json", status=status)}
+    r = {f.check_id: f for f in identity.run(Site(B, FakeFetcher(pages)))}["openapi_public"]
+    assert not r.passed and r.confidence is Confidence.LOW
+    assert "1 of 3" in r.evidence and "uncertain" in r.evidence
+
+
+def test_when_every_path_answered_absence_keeps_medium_confidence():
+    r = {f.check_id: f for f in identity.run(Site(B, FakeFetcher({})))}["openapi_public"]
+    assert r.confidence is Confidence.MEDIUM and "could not be fetched" not in r.evidence
