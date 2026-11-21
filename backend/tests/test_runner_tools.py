@@ -138,13 +138,13 @@ def test_c1_visited_and_looked_track_what_the_tools_returned():
     b.call("fetch_page", {"url": "/gone"})
     assert b.looked and not b.visited
     b.call("fetch_page", {"url": "/ok"})
-    assert b.visited == {"x.test/ok"}
+    assert b.visited == {"https://x.test/ok"}
 
 
 def test_c1_a_redirected_page_counts_as_visited_under_both_urls():
     b, _ = box({f"{O}/old": page(f"{O}/new", "<p>Moved here</p>")})
     b.call("fetch_page", {"url": "/old"})
-    assert {"x.test/old", "x.test/new"} <= b.visited
+    assert {"https://x.test/old", "https://x.test/new"} <= b.visited
 
 
 def test_c1_llms_txt_404_still_counts_as_having_looked():

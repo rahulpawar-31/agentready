@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
-from .labels import TaskLabel, alias_key, host_key, normalise_url
+from .labels import TaskLabel, alias_key, fetch_key, host_key, normalise_url
 
 MIN_QUOTE_CHARS = 8
 
@@ -63,7 +63,11 @@ def judge(task_id: str, answer: Answer | None, label: TaskLabel, origin: str, se
         return Verdict(False, "wrong_page")
     if key not in label.urls:
         return Verdict(False, "wrong_page")
-    if task_id != "main_info" and key not in visited:
+    try:
+        fetched_key = fetch_key(absolute)
+    except ValueError:
+        return Verdict(False, "wrong_page")
+    if fetched_key not in visited:
         return Verdict(False, "not_visited")
     if task_id == "main_info":
         quote = _squash(answer.quote)

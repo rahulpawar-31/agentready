@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from ..audit import parse_url
 from ..fetch import is_no_store
 from .judge import Answer
-from .labels import normalise_url
+from .labels import fetch_key, normalise_url
 
 TEXT_CLIP = 6000
 JSONLD_CLIP = 4000
@@ -155,7 +155,7 @@ class ToolBox:
                 continue
             self.seen.setdefault(key, []).append(text)
             if ok:
-                self.visited.add(key)
+                self.visited.add(fetch_key(url))
 
     def _same_host(self, url: str) -> bool:
         p = urlparse(url)

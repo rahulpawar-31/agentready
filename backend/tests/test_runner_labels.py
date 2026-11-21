@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.runner.labels import load_label, normalise_url
+from app.runner.labels import fetch_key, load_label, normalise_url
 from app.runner.tasks import STEP_LIMIT, TASK_IDS, TASKS, system_prompt
 
 GOOD = {
@@ -41,6 +41,9 @@ def test_normalise_url_ignores_scheme_fragment_trailing_slash_and_host_case():
     assert normalise_url("HTTP://X.test/docs/#intro") == normalise_url("https://x.test/docs")
     assert normalise_url("https://x.test") == normalise_url("https://x.test/")
     assert normalise_url("https://x.test/a?b=1") != normalise_url("https://x.test/a")
+    assert fetch_key("http://x.test/docs") != fetch_key("https://x.test/docs")
+    with pytest.raises(ValueError):
+        fetch_key("ftp://x.test/docs")
 
 
 @pytest.mark.parametrize("change,needle", [
@@ -50,6 +53,7 @@ def test_normalise_url_ignores_scheme_fragment_trailing_slash_and_host_case():
     (lambda d: d["tasks"]["main_info"].update(urls=[]), "at least one URL"),
     (lambda d: d["tasks"]["docs_api"].update(urls=["https://x.test/docs"]), "none_exists"),
     (lambda d: d["tasks"]["main_info"].update(none_exists=True), "none_exists"),
+    (lambda d: d["tasks"]["docs_api"].update(none_exists="false"), "must be a boolean"),
     (lambda d: d["tasks"]["contact_form"].pop("required_fields"), "required_fields"),
     (lambda d: d["tasks"]["main_info"].update(required_fields=["email"]), "required_fields"),
     (lambda d: d.update(site="https://user:pw@x.test"), "user information"),

@@ -9,7 +9,7 @@ NODOCS = TaskLabel(none_exists=True)
 SEEN = {"x.test/pricing": "Plans start at $19 per month. Cancel any time."}
 
 
-VISITED = frozenset({"x.test/pricing", "x.test/contact", "x.test/docs"})
+VISITED = frozenset({"https://x.test/pricing", "https://x.test/contact", "https://x.test/docs"})
 
 
 def j(task, answer, label, seen=None, visited=None, looked=True):
@@ -30,6 +30,16 @@ def test_main_info_failures():
     assert j("main_info", Answer(url="/pricing", quote="short"), MAIN).reason == "no_quote"
     assert j("main_info", Answer(url="/pricing", quote="Free forever for everyone"), MAIN).reason == "quote_not_on_page"
     assert j("main_info", Answer(url="/pricing", quote="Plans start at $19"), MAIN, seen={}).reason == "quote_not_on_page"
+
+
+def test_main_info_requires_the_answer_page_to_have_been_fetched():
+    assert j("main_info", Answer(url="/pricing", quote="Plans start at $19 per month"), MAIN,
+             visited=frozenset()).reason == "not_visited"
+
+
+def test_answer_scheme_must_be_http_or_https_and_match_a_fetched_url():
+    assert j("main_info", Answer(url="ftp://x.test/pricing", quote="Plans start at $19 per month"), MAIN).reason == "wrong_page"
+    assert j("main_info", Answer(url="http://x.test/pricing", quote="Plans start at $19 per month"), MAIN).reason == "not_visited"
 
 
 def test_contact_form_needs_every_required_field_in_any_accepted_name():
@@ -73,7 +83,7 @@ def test_c1_docs_and_contact_guesses_without_visiting_the_page_fail():
     assert j("docs_api", Answer(url="/docs"), DOCS, visited=frozenset()).reason == "not_visited"
     assert j("contact_form", Answer(url="/contact", fields=("email", "message")), FORM,
              visited=frozenset()).reason == "not_visited"
-    assert j("docs_api", Answer(url="/docs"), DOCS, visited=frozenset({"x.test/docs"})).success
+    assert j("docs_api", Answer(url="/docs"), DOCS, visited=frozenset({"https://x.test/docs"})).success
 
 
 def test_c1_none_exists_needs_at_least_one_look():

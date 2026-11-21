@@ -51,6 +51,15 @@ def normalise_url(url: str) -> str:
     return f"{host}{path}{query}"
 
 
+def fetch_key(url: str) -> str:
+    """Identity of a fetched URL, retaining its scheme as well as its normalized host and path."""
+    p = urlsplit(url)
+    scheme = p.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError("URL scheme must be http or https")
+    return f"{scheme}://{normalise_url(url)}"
+
+
 def host_key(url: str) -> str:
     """The normalised host[:port] of a URL."""
     return normalise_url(url).split("/", 1)[0]
@@ -125,6 +134,8 @@ def _task_label(task_id: str, raw, origin: str) -> TaskLabel:
         raise ValueError(f"{task_id}: expected an object")
     pattern = _pattern(task_id, raw["quote_pattern"]) if "quote_pattern" in raw else ""
     none_exists = raw.get("none_exists", False)
+    if not isinstance(none_exists, bool):
+        raise ValueError(f"{task_id}: none_exists must be a boolean")
     if none_exists and task_id != "docs_api":
         raise ValueError(f"{task_id}: none_exists is only allowed for docs_api")
     if "required_fields" in raw and task_id != "contact_form":
@@ -139,7 +150,7 @@ def _task_label(task_id: str, raw, origin: str) -> TaskLabel:
         if "required_fields" not in raw:
             raise ValueError("contact_form: required_fields is required")
         fields = _fields(task_id, raw["required_fields"])
-    return TaskLabel(urls, bool(none_exists), fields, pattern)
+    return TaskLabel(urls, none_exists, fields, pattern)
 
 
 def load_label(path, check_name: bool = False) -> SiteLabel:
