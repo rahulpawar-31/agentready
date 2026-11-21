@@ -38,7 +38,7 @@ def test_base_url_is_the_verified_origin_never_the_spec_server():
 def test_stub_is_valid_python_with_no_code_run_at_import():
     src = build_mcp_stub(O, SPEC)
     tree = ast.parse(src)
-    allowed = (ast.Import, ast.ImportFrom, ast.Assign, ast.FunctionDef, ast.Expr)
+    allowed = (ast.Import, ast.ImportFrom, ast.Assign, ast.FunctionDef, ast.ClassDef, ast.Expr)
     assert all(isinstance(n, allowed) for n in tree.body)
     assert not any(isinstance(n, ast.Expr) and not isinstance(n.value, ast.Constant) for n in tree.body)
     assert validate_mcp_stub(src, SPEC, O) == []
@@ -94,14 +94,22 @@ def test_the_generated_code_does_one_read_only_get_against_the_verified_origin(m
         def __exit__(self, *exc):
             return False
 
-    def fake_urlopen(request, timeout=None):
-        seen.append((request.get_method(), request.full_url, timeout))
-        return Response(b"ok")
+    class FakeOpener:
+        def open(self, request, timeout=None):
+            seen.append((request.get_method(), request.full_url, timeout))
+            return Response(b"ok")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    handlers = []
+
+    def fake_build_opener(*custom_handlers):
+        handlers.extend(custom_handlers)
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
     ns = {}
     exec(compile(build_mcp_stub(O, SPEC), "stub", "exec"), ns)          # the test (not the app) runs the stub
     assert seen == []                                                   # nothing happens at import
+    assert len(handlers) == 1 and handlers[0].redirect_request(None, None, 302, "Found", {}, "https://evil.test/") is None
     assert ns["call_tool"]("get_products_id", {"id": "a/b c"}) == "ok"
     assert ns["call_tool"]("listProducts", {"limit": 3, "other": "ignored"}) == "ok"
     assert seen == [("GET", "https://x.test/products/a%2Fb%20c", 15), ("GET", "https://x.test/products?limit=3", 15)]

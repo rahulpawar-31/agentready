@@ -130,12 +130,13 @@ def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(
     report = audit(ref.origin, fetcher)
     baseline = capture_baseline(ref.origin, fetcher)   # cache hits: the pages the audit just read
     rid = uuid4().hex
-    _reports[rid] = report
-    _baselines[rid] = baseline
-    while len(_reports) > MAX_REPORTS:
-        old, _ = _reports.popitem(last=False)
-        _baselines.pop(old, None)
-        _proposals.pop(old, None)
+    with _fix_lock:
+        _reports[rid] = report
+        _baselines[rid] = baseline
+        while len(_reports) > MAX_REPORTS:
+            old, _ = _reports.popitem(last=False)
+            _baselines.pop(old, None)
+            _proposals.pop(old, None)
     return {"id": rid, **asdict(report)}
 
 

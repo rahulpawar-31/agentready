@@ -89,6 +89,7 @@ def validate_mcp_stub(source: str, spec: dict, origin: str) -> list[str]:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return problems + ["not valid Python"]
+    no_redirect_classes = 0
     for node in tree.body:
         if isinstance(node, ast.Import):
             if any(a.name not in _STUB_IMPORTS for a in node.names):
@@ -96,8 +97,20 @@ def validate_mcp_stub(source: str, spec: dict, origin: str) -> list[str]:
         elif isinstance(node, ast.Expr):
             if not isinstance(node.value, ast.Constant):
                 problems.append("runs code at import time")
+        elif isinstance(node, ast.ClassDef):
+            no_redirect_classes += 1
+            methods = [n for n in node.body if isinstance(n, ast.FunctionDef)]
+            valid = (node.name == "_NoRedirect" and len(methods) == 1 and len(node.body) == 1
+                     and methods[0].name == "redirect_request"
+                     and len(methods[0].body) == 1 and isinstance(methods[0].body[0], ast.Return)
+                     and isinstance(methods[0].body[0].value, ast.Constant)
+                     and methods[0].body[0].value.value is None)
+            if not valid:
+                problems.append("the redirect handler must refuse redirects")
         elif not isinstance(node, (ast.Assign, ast.FunctionDef)):
             problems.append("a top-level statement other than an import, assignment or function")
+    if no_redirect_classes != 1:
+        problems.append("the stub must define exactly one no-redirect handler")
     base_url = [n.value.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
                 and len(n.targets) == 1 and getattr(n.targets[0], "id", "") == "BASE_URL"]
     if base_url != [origin]:
