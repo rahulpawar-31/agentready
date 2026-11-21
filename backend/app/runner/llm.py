@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
+MAX_TOKENS = 1024          # per model turn; part of the harness hash
 
 
 @dataclass(frozen=True)
@@ -40,9 +41,9 @@ class AnthropicClient:
     """Thin adapter over the Anthropic Messages API. The SDK reads ANTHROPIC_API_KEY itself; the key
     is never read, logged or stored here. No temperature is set, so run-to-run variance is real."""
 
-    def __init__(self, model: str | None = None, max_tokens: int = 1024, client=None):
+    def __init__(self, model: str | None = None, max_tokens: int | None = None, client=None):
         self.model = model or os.environ.get("AGENTREADY_MODEL", DEFAULT_MODEL)
-        self.max_tokens = max_tokens
+        self.max_tokens = max_tokens or MAX_TOKENS
         if client is None:
             import anthropic                      # imported lazily: the tests need no SDK or key
             client = anthropic.Anthropic()
