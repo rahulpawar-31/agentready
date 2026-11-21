@@ -1,0 +1,11 @@
+{
+  "site": "https://your-site.example",
+  "tasks": {
+    "main_info": { "urls": ["https://your-site.example/pricing"] },
+    "contact_form": {
+      "urls": ["https://your-site.example/contact"],
+      "required_fields": ["email", ["message", "your message"]]
+    },
+    "docs_api": { "none_exists": true }
+  }
+}

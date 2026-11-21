@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "toolset_version": "1",
+  "step_limit": 10,
+  "max_turns": 24,
+  "harness_sha256": "5f7d41d670930859e771dfb70a65f61cc0a5725bcad3194f49839d283bd7fa5d",
+  "note": "Written before any benchmark run. The runner refuses to start unless this file and the site label are committed and unmodified (the file on disk must be byte for byte the blob in HEAD), refuses if harness_sha256 differs from the code's current harness hash (tools, prompts, task wording, limits), and records this file's SHA-256, the label's SHA-256 and the git commit with every run. Success is judged by code against the hand label, never by the model.",
+  "tasks": {
+    "main_info": {
+      "success": "The agent fetched a page on the verified host that matches a hand-labelled page (the tools returned it), and submitted a quote of at least 8 characters that appears in the text the agent was shown for that URL. If the label sets a quote_pattern, the quote must also match it. Without a quote_pattern this task measures whether the labelled page was found and read, and a quote copied from it; it does not check that the quote states the offer or the prices.",
+      "failure": "A page that is not labelled, no answer, no quote, a quote that is not in the text shown, a quote that does not match the label's quote_pattern, the step limit reached without an answer, or a block by a CAPTCHA or login."
+    },
+    "contact_form": {
+      "success": "The agent fetched a page that matches a hand-labelled contact page (the tools returned it), submitted its URL, and named every required field (case and punctuation ignored; any accepted alias counts).",
+      "failure": "A page that is not labelled, a labelled page the agent never fetched, no answer, a required field missing, the step limit reached without an answer, or a block by a CAPTCHA or login."
+    },
+    "docs_api": {
+      "success": "The agent fetched a page that matches a hand-labelled docs or API page (the tools returned it) and submitted its URL; or, when the label says none exists, the agent looked at least once (fetched a page or read llms.txt) and then said none exists (none_exists, or gave_up not_found).",
+      "failure": "A page that is not labelled, a labelled page the agent never fetched, a wrong claim that none exists, a claim that none exists without having looked, no answer, the step limit reached without an answer, or a block by a CAPTCHA or login."
+    }
+  },
+  "invalid_runs": "A run is invalid, not a failure, when the model call failed (llm_error), when a bug in the runner's own tools or judge broke it (harness_error), when a model turn was cut off or refused (max_tokens, refusal), or when a network failure (not a guard block) happened in a run that did not succeed (network_error). Invalid runs are recorded, kept as <name>.invalid-<k>.json when rerun, and rerun in the same snapshot; valid results are never overwritten."
+}
