@@ -27,7 +27,9 @@ class ScriptedLLM:
         item = self._script.pop(0)
         if isinstance(item, Exception):
             raise item
+        if isinstance(item, LLMResponse):
+            return item
         if isinstance(item, str):
-            return LLMResponse(item, (), ({"type": "text", "text": item},), 10, 5)
+            return LLMResponse(item, (), ({"type": "text", "text": item},), 10, 5, "end_turn", "fake-model")
         content = tuple({"type": "tool_use", "id": c.id, "name": c.name, "input": c.input} for c in item)
-        return LLMResponse("", tuple(item), content, 10, 5)
+        return LLMResponse("", tuple(item), content, 10, 5, "tool_use", "fake-model")

@@ -65,3 +65,41 @@ def test_scripted_llm_follows_its_script_and_records_messages():
 def test_a_real_client_is_not_needed_to_import_the_module():
     import app.runner.llm as mod
     assert "anthropic" not in mod.__dict__
+
+
+# --- review fixes ------------------------------------------------------------------
+def test_i10_stop_reason_and_the_answering_model_are_recorded():
+    messages = FakeMessages(NS(content=[NS(type="text", text="hi")], usage=None, stop_reason="max_tokens",
+                               model="claude-sonnet-5-5-20261101"))
+    r = AnthropicClient(client=NS(messages=messages)).complete("s", [], [])
+    assert (r.stop_reason, r.model) == ("max_tokens", "claude-sonnet-5-5-20261101")
+
+
+def test_i10_unknown_blocks_such_as_thinking_are_replayed_not_dropped():
+    class Thinking:
+        type = "thinking"
+
+        def model_dump(self, **kw):
+            assert kw == {"exclude_none": True}
+            return {"type": "thinking", "thinking": "hmm", "signature": "sig"}
+    c, _ = client_with([Thinking(), NS(type="tool_use", id="t1", name="fetch_page", input={"url": "/"})])
+    r = c.complete("s", [], [])
+    assert r.content[0] == {"type": "thinking", "thinking": "hmm", "signature": "sig"}
+    assert [t.id for t in r.tool_calls] == ["t1"]
+
+
+def test_i10_a_block_that_cannot_be_replayed_raises_explicitly():
+    c, _ = client_with([NS(type="mystery")])
+    with pytest.raises(ValueError, match="unsupported content block type: mystery"):
+        c.complete("s", [], [])
+
+
+def test_i10_an_unreplayable_block_makes_the_run_an_llm_error_with_the_reason_recorded():
+    from app.runner.agent import run_task
+    from app.runner.labels import TaskLabel
+    from app.runner.tasks import TASKS
+    from tests.conftest import FakeFetcher
+    c, _ = client_with([NS(type="mystery")])
+    r = run_task(task=TASKS["docs_api"], label=TaskLabel(urls=("x.test/docs",)), origin="https://x.test",
+                 fetcher=FakeFetcher({}), llm=c)
+    assert (r.valid, r.reason) == (False, "llm_error") and "mystery" in r.error

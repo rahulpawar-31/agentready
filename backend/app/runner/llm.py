@@ -19,10 +19,21 @@ class LLMResponse:
     content: tuple                    # assistant content blocks (plain dicts) to append to the conversation
     input_tokens: int = 0
     output_tokens: int = 0
+    stop_reason: str = ""             # the API's stop reason: end_turn, tool_use, max_tokens, refusal ...
+    model: str = ""                   # the model that actually answered (resp.model)
 
 
 class LLMClient(Protocol):
     def complete(self, system: str, messages: list, tools: list) -> LLMResponse: ...
+
+
+def _pass_through(block) -> dict:
+    """Any other block (thinking, redacted thinking ...) must be replayed unchanged or the next call
+    can fail. Convert it to a plain dict; refuse explicitly when that is not possible."""
+    dump = getattr(block, "model_dump", None)
+    if callable(dump):
+        return dump(exclude_none=True)
+    raise ValueError(f"unsupported content block type: {getattr(block, 'type', '?')}")
 
 
 class AnthropicClient:
@@ -48,6 +59,9 @@ class AnthropicClient:
             elif block.type == "tool_use":
                 calls.append(ToolCall(block.id, block.name, dict(block.input)))
                 content.append({"type": "tool_use", "id": block.id, "name": block.name, "input": dict(block.input)})
+            else:
+                content.append(_pass_through(block))
         usage = getattr(resp, "usage", None)
         return LLMResponse(" ".join(text_parts), tuple(calls), tuple(content),
-                           getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0)
+                           getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0,
+                           str(getattr(resp, "stop_reason", "") or ""), str(getattr(resp, "model", "") or ""))

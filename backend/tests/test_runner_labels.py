@@ -76,3 +76,70 @@ def test_tasks_and_prompt():
     assert all("{site}" in t.instruction for t in TASKS.values())
     p = system_prompt("x.test", STEP_LIMIT)
     assert "x.test" in p and str(STEP_LIMIT) in p and "untrusted" in p
+
+
+def test_i8_aliases_that_normalise_to_nothing_are_rejected(tmp_path):
+    for alias in ("???", "名前", ["email", "!!"]):
+        data = mutated(lambda d, a=alias: d["tasks"]["contact_form"].update(required_fields=[a]))
+        with pytest.raises(ValueError) as e:
+            load_label(write(tmp_path, data))
+        assert "letters or digits" in str(e.value)
+
+
+def test_c2_quote_pattern_is_validated(tmp_path):
+    ok = load_label(write(tmp_path, mutated(lambda d: d["tasks"]["main_info"].update(quote_pattern=r"\$\d+"))))
+    assert ok.tasks["main_info"].quote_pattern == r"\$\d+"
+    for change in (lambda d: d["tasks"]["main_info"].update(quote_pattern="("),
+                   lambda d: d["tasks"]["main_info"].update(quote_pattern=5),
+                   lambda d: d["tasks"]["main_info"].update(quote_pattern="x" * 300),
+                   lambda d: d["tasks"]["docs_api"].update(quote_pattern="x")):
+        with pytest.raises(ValueError) as e:
+            load_label(write(tmp_path, mutated(change)))
+        assert "quote_pattern" in str(e.value)
+
+
+def test_m8_label_file_name_must_match_the_site(tmp_path):
+    p = tmp_path / "other.test.json"
+    p.write_text(json.dumps(GOOD))
+    with pytest.raises(ValueError) as e:
+        load_label(p, check_name=True)
+    assert "file name" in str(e.value)
+    ok = tmp_path / "x.test.json"
+    ok.write_text(json.dumps(GOOD))
+    assert load_label(ok, check_name=True).host == "x.test"
+    port = tmp_path / "x.test_8443.json"
+    port.write_text(json.dumps(dict(GOOD, site="https://x.test:8443", tasks={
+        k: json.loads(json.dumps(v).replace("https://x.test", "https://x.test:8443")) for k, v in GOOD["tasks"].items()})))
+    assert load_label(port, check_name=True).host == "x.test:8443"
+
+
+@pytest.mark.parametrize("a,b", [
+    ("https://x.test/docs;v=1", "https://x.test/docs;v=2"),
+    ("https://x.test/a/b", "https://x.test/a/c"),
+])
+def test_m3_distinct_pages_stay_distinct(a, b):
+    assert normalise_url(a) != normalise_url(b)
+
+
+@pytest.mark.parametrize("a,b", [
+    ("https://x.test/p?a=1&b=2", "https://x.test/p?b=2&a=1"),
+    ("https://x.test/a%20b", "https://x.test/a%20b"),
+    ("https://x.test/%64ocs", "https://x.test/docs"),
+    ("https://x.test/%7Euser", "https://x.test/~user"),
+    ("https://x.test/%2f", "https://x.test/%2F"),
+    ("https://x.test//docs", "https://x.test/docs"),
+    ("https://x.test/docs//", "https://x.test/docs"),
+    ("https://x.test/a/../docs", "https://x.test/docs"),
+    ("https://x.test/./docs", "https://x.test/docs"),
+    ("https://x.test:443/docs", "https://x.test/docs"),
+    ("http://x.test:80/docs", "http://x.test/docs"),
+    ("https://x.test./docs", "https://x.test/docs"),
+])
+def test_m3_the_same_page_has_one_key(a, b):
+    assert normalise_url(a) == normalise_url(b)
+
+
+def test_m3_a_non_default_port_is_a_different_host_and_bad_urls_raise_value_error():
+    assert normalise_url("https://x.test:8443/a") != normalise_url("https://x.test/a")
+    with pytest.raises(ValueError):
+        normalise_url("http://[bad")

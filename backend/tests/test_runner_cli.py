@@ -16,6 +16,7 @@ LABEL = {"site": O, "tasks": {
     "docs_api": {"none_exists": True}}}
 CRITERIA = {"version": 1, "toolset_version": "1", "step_limit": 10, "max_turns": 24, "tasks": {}}
 PRICING = f"<p>Plans start at $19 per month.</p>"
+CONTACT = '<form action="/s"><label for="e">Email</label><input id="e" name="email"></form>'
 
 
 def workspace(tmp_path, criteria=CRITERIA):
@@ -25,9 +26,11 @@ def workspace(tmp_path, criteria=CRITERIA):
 
 
 def script_for_one_repeat():
-    return [[tool("fetch_page", url="/pricing")],           # the quote can only score if the page was actually shown
+    return [[tool("fetch_page", url="/pricing")],           # a page can only be the answer if it was actually fetched
             [tool("submit_answer", url="/pricing", quote="Plans start at $19 per month")],
+            [tool("fetch_page", url="/contact")],
             [tool("submit_answer", url="/contact", fields=["email"])],
+            [tool("read_llms_txt")],
             [tool("submit_answer", none_exists=True)]]
 
 
@@ -40,7 +43,8 @@ class Recorder:
                          committed=lambda paths: list(problems), model="test-model")
 
     def make_fetcher(self, netloc, snapshot):
-        f = FakeFetcher({f"{O}/pricing": page(f"{O}/pricing", PRICING)})
+        f = FakeFetcher({f"{O}/pricing": page(f"{O}/pricing", PRICING),
+                         f"{O}/contact": page(f"{O}/contact", CONTACT)})
         self.fetchers.append((netloc, snapshot, f))
         return f
 
@@ -69,7 +73,7 @@ def test_three_repeats_make_nine_runs(tmp_path):
 
 
 def test_tasks_option_limits_the_run(tmp_path):
-    ws, rec = workspace(tmp_path), Recorder(script=[[tool("submit_answer", none_exists=True)]])
+    ws, rec = workspace(tmp_path), Recorder(script=[[tool("read_llms_txt")], [tool("submit_answer", none_exists=True)]])
     assert main(argv(ws, "--tasks", "docs_api"), rec.deps, lambda s: None, repo_root=ws) == 0
     assert [r["task"] for r in load_runs(ws / "results", "before")] == ["docs_api"]
 
@@ -115,8 +119,9 @@ def test_existing_result_files_are_never_overwritten(tmp_path):
 
 
 def test_invalid_runs_give_exit_code_3(tmp_path):
-    ws, rec = workspace(tmp_path), Recorder(script=[RuntimeError("rate limited"), [tool("submit_answer", url="/contact", fields=["email"])],
-                                                  [tool("submit_answer", none_exists=True)]])
+    ws, rec = workspace(tmp_path), Recorder(script=[RuntimeError("rate limited"), [tool("fetch_page", url="/contact")],
+                                                  [tool("submit_answer", url="/contact", fields=["email"])],
+                                                  [tool("read_llms_txt")], [tool("submit_answer", none_exists=True)]])
     assert main(argv(ws), rec.deps, lambda s: None, repo_root=ws) == 3
     runs = {r["task"]: r["result"] for r in load_runs(ws / "results", "before")}
     assert runs["main_info"]["valid"] is False and runs["main_info"]["reason"] == "llm_error"
