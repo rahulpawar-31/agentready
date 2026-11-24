@@ -11,6 +11,8 @@ from .secrets import find_secrets
 from .validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_stub
 
 DIFF_MAX_CHARS = 100_000        # a diff the owner cannot realistically review is not presented
+MAX_PAGE_CHARS = 500_000        # a home page beyond this is not processed (bounds the work on hostile pages)
+MAX_PAGE_TAGS = 50_000
 _HEAD_CLOSE = re.compile(r"</head\s*>", re.I)
 
 
@@ -48,6 +50,8 @@ def _finish(fix: Fix, problems: list):
 
 def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
     origin, fixes, skipped = baseline.origin, [], []
+    if not baseline.available:
+        return Proposal([], [Skipped(kind, "baseline unavailable") for kind in FixKind])
 
     def add(result):
         fix, skip = result
@@ -57,6 +61,7 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
             skipped.append(skip)
 
     home = baseline.body("/")
+    too_big = home is not None and (len(home) > MAX_PAGE_CHARS or home.count("<") > MAX_PAGE_TAGS)
 
     # llms.txt
     f = _finding(report, "llms_txt")
@@ -66,6 +71,8 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
         skipped.append(Skipped(FixKind.LLMS_TXT, "the check could not reach /llms.txt, so it is not known whether one exists"))
     elif home is None:
         skipped.append(Skipped(FixKind.LLMS_TXT, "the home page could not be fetched"))
+    elif too_big:
+        skipped.append(Skipped(FixKind.LLMS_TXT, "page too large to process"))
     else:
         try:
             text = build_llms_txt(origin, home)
@@ -84,6 +91,8 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
         skipped.append(Skipped(FixKind.JSON_LD, "valid JSON-LD is already present"))
     elif home is None:
         skipped.append(Skipped(FixKind.JSON_LD, "the home page could not be fetched"))
+    elif too_big:
+        skipped.append(Skipped(FixKind.JSON_LD, "page too large to process"))
     else:
         try:
             snippet = json_ld_snippet(build_json_ld(origin, home))

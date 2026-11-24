@@ -179,3 +179,34 @@ def test_site_text_in_the_diff_is_returned_as_data_not_markup(monkeypatch):
     assert "<img" not in r.text and "<script>alert" not in r.text           # site text never arrives as raw markup
     diffs = {f["id"]: f["diff"] for f in r.json()["fixes"]}
     assert "\\u003cimg" in diffs["json_ld"] and "onerror" in diffs["json_ld"]
+
+
+def test_i6_the_baseline_adds_no_requests_and_a_503_during_the_audit_gives_no_fix(monkeypatch, tmp_path):
+    import collections
+    import httpx
+    seen = []
+    down = {"/llms.txt", "/openapi.json", "/swagger.json", "/.well-known/openapi.json"}
+
+    def handler(req):
+        seen.append(req.url.path)
+        if req.url.path == "/":
+            return httpx.Response(200, text=site_html())
+        return httpx.Response(503 if req.url.path in down else 404, text="")
+
+    monkeypatch.setattr(main, "new_http_client", lambda: httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=False, trust_env=False))
+    monkeypatch.setattr(main, "GUARD_OPTIONS", {"sleep": lambda s: None})
+    monkeypatch.setattr(main, "CACHE_DIR", tmp_path / "cache")
+    main.app.dependency_overrides[main.get_txt_lookup] = lambda: (lambda name: [])
+    main.app.dependency_overrides[main.get_resolver] = lambda: public_resolver
+    c = TestClient(main.app)
+    r = c.post("/audit", json={"url": B})
+    assert r.status_code == 200
+    counts = collections.Counter(seen)
+    assert all(counts[p] == 1 for p in down), counts          # 503s are never cached: a second fetch would show here
+    assert len(seen) == 10                                    # one ownership probe plus the audit's nine paths
+    body = c.post(f"/report/{r.json()['id']}/fixes").json()
+    assert "mcp_stub" not in {f["id"] for f in body["fixes"]} and "llms_txt" not in {f["id"] for f in body["fixes"]}
+    reasons = {s["kind"]: s["reason"] for s in body["skipped"]}
+    assert "could not reach" in reasons["llms_txt"] and reasons["mcp_stub"] == "no OpenAPI document was found"
+    assert len(seen) == 10                                    # proposing fixes made no request either

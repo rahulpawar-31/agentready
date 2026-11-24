@@ -11,8 +11,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .audit import SiteRef, audit, parse_url
-from .fixes.baseline import Baseline, capture_baseline
-from .fixes.models import FixKind
+from .fixes.baseline import Baseline, RecordingFetcher
+from .fixes.models import FixKind, Proposal, Skipped
 from .fixes.propose import propose_fixes
 from .fixes.queue import FixQueue, InvalidTransition, NotApproved, UnknownFix, summary
 from .fixes.validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_stub
@@ -127,15 +127,20 @@ def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(
     if not owner.verified:
         raise HTTPException(403, _instructions(ref))
     fetcher = build_audit_fetcher(ref.netloc, req.snapshot, resolver=resolver)   # the cache is created only now
-    report = audit(ref.origin, fetcher)
-    baseline = capture_baseline(ref.origin, fetcher)   # cache hits: the pages the audit just read
+    recorder = RecordingFetcher(fetcher)               # remembers the pages the audit reads; it makes no request itself
+    report = audit(ref.origin, recorder)
+    try:
+        baseline = Baseline.from_recorder(ref.origin, recorder)
+    except Exception:                                  # noqa: BLE001 - the report must survive a baseline problem
+        baseline = Baseline.unavailable(ref.origin)
     rid = uuid4().hex
-    _reports[rid] = report
-    _baselines[rid] = baseline
-    while len(_reports) > MAX_REPORTS:
-        old, _ = _reports.popitem(last=False)
-        _baselines.pop(old, None)
-        _proposals.pop(old, None)
+    with _fix_lock:
+        _reports[rid] = report
+        _baselines[rid] = baseline
+        while len(_reports) > MAX_REPORTS:
+            old, _ = _reports.popitem(last=False)
+            _baselines.pop(old, None)
+            _proposals.pop(old, None)
     return {"id": rid, **asdict(report)}
 
 
@@ -167,20 +172,40 @@ def _fixes_body(rid: str) -> dict:
 def _queue(rid: str) -> FixQueue:
     if rid not in _reports:
         raise HTTPException(404, "Unknown report")
-    if rid not in _proposals:
+    entry = _proposals.get(rid)
+    if entry is None:
         raise HTTPException(404, "No fixes proposed yet")
-    return _proposals[rid][0]
+    return entry[0]
+
+
+def _safe_propose(report: Report, baseline: Baseline) -> Proposal:
+    """propose_fixes must never turn a hostile page or spec into a 500. Whatever goes wrong, every kind is listed
+    as skipped with one generic reason (the exception text is never shown: it could carry site text)."""
+    try:
+        return propose_fixes(report, baseline)
+    except Exception:                                   # noqa: BLE001 - includes RecursionError
+        return Proposal([], [Skipped(kind, "could not be generated") for kind in FixKind])
 
 
 @app.post("/report/{rid}/fixes")
 def post_fixes(rid: str):
     with _fix_lock:
-        if rid not in _reports:
+        report, baseline = _reports.get(rid), _baselines.get(rid)
+        if report is None or baseline is None:
             raise HTTPException(404, "Unknown report")
-        if rid not in _proposals:                       # a second call never resets a decision
-            baseline = _baselines[rid]
-            proposal = propose_fixes(_reports[rid], baseline)
-            _proposals[rid] = (FixQueue(proposal.fixes, _validators(baseline)), proposal.skipped)
+        if rid in _proposals:                           # a second call never resets a decision
+            return _fixes_body(rid)
+    proposal = _safe_propose(report, baseline)          # the slow part runs outside the lock
+    try:
+        validators = _validators(baseline)
+    except Exception:                                   # noqa: BLE001
+        validators = {}
+        proposal = Proposal([], [Skipped(kind, "could not be generated") for kind in FixKind])
+    with _fix_lock:
+        if rid not in _reports:                         # evicted while the proposal was being made
+            raise HTTPException(404, "Unknown report")
+        if rid not in _proposals:
+            _proposals[rid] = (FixQueue(proposal.fixes, validators), proposal.skipped)
         return _fixes_body(rid)
 
 

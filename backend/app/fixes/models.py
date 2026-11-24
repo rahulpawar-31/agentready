@@ -39,6 +39,9 @@ class Fix:
     finding_id: str
     status: FixStatus = FixStatus.PROPOSED
     approved_sha256: str = ""
+    diff_kind: str = "full"      # "excerpt" when the page is too long to show whole
+    warning: str = ""            # something the reviewer should know about the existing page
+    note: str = ""               # context for the reviewer (for example, /llms.txt currently returns HTML)
 
 
 @dataclass(frozen=True)

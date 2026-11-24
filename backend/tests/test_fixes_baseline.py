@@ -54,3 +54,35 @@ def test_fix_model_defaults():
     x = Fix(id="llms_txt", kind=FixKind.LLMS_TXT, path="/llms.txt", filename="llms.txt", description="d",
             content="c", diff="", finding_id="llms_txt")
     assert x.status is FixStatus.PROPOSED and x.approved_sha256 == ""
+
+
+# --- I6: the baseline is the audit's own pages, never a second fetch
+def test_recording_fetcher_remembers_pages_and_only_calls_get():
+    from app.fixes.baseline import RecordingFetcher
+    inner = FakeFetcher({f"{O}/": page(f"{O}/", "<html>hi</html>")})
+    r = RecordingFetcher(inner)
+    assert r.get(f"{O}/").body == "<html>hi</html>" and r.get(f"{O}/llms.txt").status == 404
+    assert [u for u, _ in inner.calls] == [f"{O}/", f"{O}/llms.txt"] and set(r.pages) == {f"{O}/", f"{O}/llms.txt"}
+
+
+def test_from_recorder_uses_what_the_audit_saw_and_requests_nothing():
+    from app.fixes.baseline import RecordingFetcher
+    inner = FakeFetcher({f"{O}/": page(f"{O}/", "home"), f"{O}/llms.txt": page(f"{O}/llms.txt", "", status=0),
+                         f"{O}/openapi.json": page(f"{O}/openapi.json", "", status=503)})
+    r = RecordingFetcher(inner)
+    for path in ("/", "/llms.txt", "/openapi.json"):
+        r.get(O + path)
+    calls = len(inner.calls)
+    b = Baseline.from_recorder(O, r)
+    assert len(inner.calls) == calls                           # nothing was requested again
+    assert b.body("/") == "home" and b.body("/llms.txt") is None and b.body("/openapi.json") is None
+    assert "/llms.txt" not in b.pages and b.pages["/openapi.json"] == (503, "")      # unreachable is absent, not retried
+    assert "/swagger.json" not in b.pages and b.available
+
+
+def test_an_unavailable_baseline_proposes_nothing():
+    from app.audit import audit
+    from app.fixes.propose import propose_fixes
+    b = Baseline.unavailable(O)
+    p = propose_fixes(audit(O, FakeFetcher({})), b)
+    assert not b.available and p.fixes == [] and {s.reason for s in p.skipped} == {"baseline unavailable"}
