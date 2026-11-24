@@ -187,3 +187,33 @@ def test_a_head_response_has_an_empty_body_but_the_length_of_the_real_one():
     assert get.body == body and get.headers["content-length"] == "1234"
     for name, value in ui_routes.UI_HEADERS.items():
         assert head.headers[name.lower()] == value == get.headers[name.lower()]
+
+
+def test_a_ui_directory_that_is_itself_a_symbolic_link_is_not_followed(monkeypatch, tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "app.js").write_text("// real\n")
+    (real / "index.html").write_text("<h1>x</h1>")
+    link = tmp_path / "ui"
+    link.symlink_to(real, target_is_directory=True)
+    monkeypatch.setattr(ui_routes, "UI_DIR", link)
+    assert ui_routes._load() == (b"", {})
+
+
+def test_only_regular_readable_files_are_loaded_and_the_rest_is_skipped(monkeypatch, tmp_path):
+    import os
+    import stat
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    (ui / "app.js").write_text("// ok\n")
+    os.mkfifo(ui / "pipe.js")                       # a named pipe must never be opened for reading (it would block)
+    (ui / "dir.css").mkdir()
+    secret = ui / "locked.css"
+    secret.write_text("/* x */")
+    secret.chmod(0)
+    try:
+        monkeypatch.setattr(ui_routes, "UI_DIR", ui)
+        index, files = ui_routes._load()
+    finally:
+        secret.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    assert set(files) == {"app.js"} and index == b""

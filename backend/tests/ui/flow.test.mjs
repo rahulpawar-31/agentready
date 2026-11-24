@@ -415,18 +415,20 @@ test("a page without a window object still starts", async () => {
 });
 
 // ---------------------------------------------------------------- Group C: flow robustness
-test("a failed address lookup leaves the report, the saved id and the audited site alone", async () => {
+test("a failed lookup for a newly typed address leaves nothing of the old site on screen and forgets its saved id", async () => {
+  // Merged behaviour from the commit "harden asset loading and re-audits": the old steps are cleared before the lookup.
   const t = await boot();
   await toReport(t);
   t.srv.networkDown = true;
   await enter(t, "other.test");
   assert.ok(status(t.els).includes("Could not reach AgentReady"));
-  assert.ok(shown(t.els, "step-report"), "the report is still there");
-  assert.deepEqual([...t.storage.m.values()], [RID], "and so is its saved id");
-  assert.equal(t.app.store.get().site, "https://x.test");
+  assert.ok(!shown(t.els, "step-report") && !shown(t.els, "step-fixes") && !shown(t.els, "step-verify"), "no step of the old site is shown");
+  assert.equal(t.storage.m.size, 0, "its saved id is gone, so nothing can approve or export for it from this page");
+  assert.equal(t.app.store.get().site, "https://other.test", "the next action targets the address that was just typed");
+  assert.equal(byTag(t.els["step-url"], "input").length, 1, "the address form stays usable");
   t.srv.networkDown = false;
-  await click(t, "step-report", "Re-audit with fresh pages");
-  assert.equal(t.srv.audits.at(-1).url, "https://x.test", "re-audit still targets the audited site");
+  await enter(t, "other.test");
+  assert.ok(shown(t.els, "step-verify"), "typing the address again works");
 });
 
 test("a successful lookup for a new site clears the old report and its saved id", async () => {
@@ -566,7 +568,7 @@ test("a refused first audit puts the keyboard on the verification steps", async 
   assert.equal(t.doc.activeElement.getAttribute("id"), "verify-heading");
 });
 
-test("steps that cannot be drawn after a good lookup leave the old report where it is", async () => {
+test("instructions that cannot be drawn leave a fixed sentence, no half-drawn step and a usable address form", async () => {
   const srv = server({ verified: true });
   const original = srv.fetch;
   srv.fetch = async (path, init) => (path.startsWith("/ownership-token?domain=other.test") ? reply(200, { ...INSTRUCTIONS, domain: THROWER }) : original(path, init));
@@ -574,6 +576,19 @@ test("steps that cannot be drawn after a good lookup leave the old report where 
   await toReport(t);
   await enter(t, "other.test");
   assert.ok(status(t.els).includes("Something went wrong on the server"), status(t.els));
-  assert.ok(shown(t.els, "step-report"), "the old report is still shown");
-  assert.deepEqual([...t.storage.m.values()], [RID], "and its saved id is kept");
+  assert.ok(!shown(t.els, "step-verify"));
+  assert.equal(t.els["step-verify"].children.length, 0, "nothing half drawn");
+  assert.equal(byTag(t.els["step-url"], "input").length, 1);
+  assert.equal(button(t.els, "step-url", "Get verification steps").hasAttribute("disabled"), false);
+});
+
+test("two re-audits in the same second use different snapshot names, each valid for the server", async () => {
+  const t = await boot();
+  await toReport(t);
+  await click(t, "step-report", "Re-audit with fresh pages");
+  await click(t, "step-report", "Re-audit with fresh pages");
+  await click(t, "step-report", "Re-audit with fresh pages");
+  const names = t.srv.audits.slice(1).map((a) => a.snapshot);
+  assert.deepEqual(names, ["rerun-20261124090507", "rerun-20261124090507-1", "rerun-20261124090507-2"]);
+  for (const n of names) assert.match(n, /^[A-Za-z0-9_-]{1,64}$/);
 });

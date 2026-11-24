@@ -35,7 +35,8 @@ with a message when Node is not installed).
    `not detected`, `unreachable`) and its confidence. Each finding is a row you open with its **Show evidence** text.
    Findings that need attention come first. Checks that could not be reached are listed separately and are not in the
    score. At most 500 findings are drawn (the score already counts all of them), and the page says how many are not shown. **Re-audit with fresh pages** runs the audit again under a
-   new snapshot name (`rerun-<UTC time>`), because an audit under the same snapshot name returns the pages it cached.
+   new snapshot name (`rerun-<UTC time>`, with `-1`, `-2` added if you re-audit more than once in the same second),
+   because an audit under the same snapshot name returns the pages it cached.
    Use it after you have deployed a fix.
 4. **Review fixes.** **Propose fixes** calls `POST /report/{id}/fixes`. Each fix is a card with its diff, which is shown
    in full: no line is ever shortened (the box scrolls sideways). **Approve** or **Reject**. Only after approval do
@@ -73,7 +74,8 @@ with a message when Node is not installed).
 - **File serving.** Only files named like `app.js` or `app.css` (lower case letters, digits, `_`, `-`, then `.js` or
   `.css`) that were in `backend/app/ui/` when the app started are served under `/ui/`, from memory. There is no path to
   look up on disk, so there is nothing to traverse; symbolic links, upper-case names, `.html` (other than the page
-  itself at `/`) and every other extension are never loaded. Any other name gets the same JSON 404 as an unknown API path.
+  itself at `/`) and every other extension are never loaded. The directory and each file are opened without following
+  links and without blocking, and anything that is not a regular, readable file (a named pipe, a directory) is skipped. Any other name gets the same JSON 404 as an unknown API path.
 - **Invisible characters.** Text from the audited site is shown with bidi controls, zero-width characters, byte order
   marks, soft hyphens and line or paragraph separators removed, and with odd spaces turned into a plain space, so a
   displayed address cannot be visually reordered. In a diff nothing is dropped: each such character is shown as a visible
@@ -99,6 +101,11 @@ with a message when Node is not installed).
 - A page reload keeps the report for the same browser tab (the id is in `sessionStorage`). Another tab or browser needs
   the id, which is not shown anywhere in the page. A restore that finishes after you have started something else is
   discarded.
+- Typing a new address clears the earlier site's steps, report and saved id **before** the lookup runs, so a failed
+  lookup (for example a network error) leaves nothing of the old site on screen. The server still holds that report, but
+  approving or exporting needs its id, which the page no longer has: run a new audit to get back to it. (This follows
+  the commit "harden asset loading and re-audits", which replaced my earlier version that cleared only after a
+  successful lookup.)
 - After approving or rejecting a fix, keyboard focus moves to the "4. Review fixes" heading, not to the card you were
   on, because the cards are drawn again. With many fixes you may have to scroll back to your card. (Kept as is.)
 - Downloading uses a temporary link to a browser-made file (`blob:` URL), which is released 30 seconds after the click

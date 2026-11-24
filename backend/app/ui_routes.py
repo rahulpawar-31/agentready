@@ -47,7 +47,7 @@ def _load() -> tuple[bytes, dict[str, tuple[bytes, str]]]:
                 continue
             fd = -1
             try:
-                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)   # O_NONBLOCK: a named pipe must not block start-up
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
                     continue
                 with os.fdopen(fd, "rb") as asset:
