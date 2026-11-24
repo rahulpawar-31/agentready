@@ -21,6 +21,7 @@ from .fetch import CachedFetcher, GuardedFetcher, HttpxFetcher, default_resolver
 from .mcp_server import install_mcp, mcp_lifespan
 from .models import Report
 from .ownership import default_txt_lookup, make_token, verify_ownership
+from .ui_routes import install_ui
 
 # Fail closed: a guessable default secret would make every ownership token predictable.
 SECRET = os.environ.get("AGENTREADY_SECRET")
@@ -260,4 +261,5 @@ def export_fix(rid: str, fid: str):
 # --- MCP (Plan 4): the same process, so agents and the owner see the same reports and fix queues. One route, added
 # after all the REST routes (not a mount: a mount at "/" swallowed their 405, 307 and JSON 404 answers). The endpoint
 # is exactly /mcp. There is no tool to approve or export a fix.
+install_ui(app)    # Plan 5: the one-page web UI (GET / and GET /ui/<file>); read-only static files
 install_mcp(app)
