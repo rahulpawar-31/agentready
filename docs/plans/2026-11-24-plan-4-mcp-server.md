@@ -533,3 +533,6 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
   exactly by a check in front of the SDK's (default origins now include `[::1]`; `:*` means a numeric port; an entry
   without a port matches the bare name), the dependency is pinned `mcp>=2.3,<2.5`, and the docs state the bind
   address, the 80/443 case and the `/mcp/` redirect. Tests: `tests/test_mcp_logging.py`, `tests/test_mcp_http.py`.
+- **Found on the final re-run of the reviewer's scripts (d4):** `GET /mcp` with `Accept: text/event-stream` opened an event
+  stream that never ended (the stateless server never sends anything on its own). The gateway now answers `POST` only;
+  every other method gets 405 with `Allow: POST` after the Host and Origin check. Test: `test_only_post_is_served_and_nothing_can_hold_a_stream_open`.

@@ -492,6 +492,12 @@ class McpGateway:
         if refusal is not None:
             await PlainTextResponse(refusal[1], status_code=refusal[0])(scope, receive, send)
             return
+        if scope["method"] != "POST":
+            # The server is stateless and never sends anything on its own, so it has no use for the optional GET
+            # stream (an SSE connection the SDK would keep open until the client leaves). Refusing it means an
+            # unauthenticated caller cannot hold connections open. DELETE (ending a session) has no meaning either.
+            await PlainTextResponse("Method Not Allowed", status_code=405, headers={"Allow": "POST"})(scope, receive, send)
+            return
         await runtime.app(scope, receive, send)
 
 

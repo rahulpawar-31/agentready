@@ -262,3 +262,47 @@ def test_the_documented_run_command_binds_to_localhost_only():
 def test_the_sdk_dependency_is_pinned_to_the_versions_that_were_tested():
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     assert '"mcp>=2.3,<2.5"' in text
+
+
+# --- no server-to-client stream (found when the reviewer's d4 script was rerun on the final code) -----------------
+def gateway_call(method, host="localhost:8000", extra_headers=()):
+    """Drive the real gateway through a running lifespan without a socket. The request never sends a disconnect, so a
+    response that never ends (an SSE stream) shows up as a timeout instead of a hung test."""
+    import asyncio
+    from app.mcp_server import McpGateway
+
+    async def go():
+        app = fresh_app()
+        async with app.router.lifespan_context(app):
+            sent = []
+
+            async def receive():
+                await asyncio.sleep(3600)
+
+            async def send(message):
+                sent.append(message)
+            scope = {"type": "http", "method": method, "path": "/mcp", "raw_path": b"/mcp", "query_string": b"",
+                     "root_path": "", "scheme": "http", "http_version": "1.1", "server": ("localhost", 8000),
+                     "client": ("127.0.0.1", 1), "app": app, "state": {},
+                     "headers": [(b"host", host.encode()), (b"accept", b"text/event-stream"), *extra_headers]}
+            try:
+                await asyncio.wait_for(McpGateway()(scope, receive, send), timeout=3)
+            except asyncio.TimeoutError:
+                return "never ends", {}
+            start = next(m for m in sent if m["type"] == "http.response.start")
+            return start["status"], {k.decode(): v.decode() for k, v in start["headers"]}
+    return asyncio.run(go())
+
+
+@pytest.mark.parametrize("method", ["GET", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"])
+def test_only_post_is_served_and_nothing_can_hold_a_stream_open(method):
+    """The server is stateless and never sends anything on its own, so it has no use for the optional GET stream.
+    An unauthenticated caller must not be able to hold connections open with it."""
+    status, headers = gateway_call(method)
+    assert status == 405, status
+    assert headers["allow"] == "POST"
+
+
+def test_a_foreign_host_is_still_refused_before_the_method_is_looked_at():
+    assert gateway_call("GET", host="evil.test")[0] == 421
+    assert gateway_call("GET", host="localhost:8000@evil.test")[0] == 421

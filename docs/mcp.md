@@ -113,6 +113,9 @@ was proposed.
 - **No sessions are kept.** The transport is stateless: every request stands alone, so nobody can open thousands of
   anonymous sessions to use up memory, and a server restart loses nothing an agent holds (only the in-memory reports,
   see Limits).
+  `/mcp` answers `POST` only: `GET` (the optional server-to-client event stream, which the SDK would keep open until the
+  client leaves), `DELETE`, `PUT`, `HEAD` and `OPTIONS` get `405` with `Allow: POST`, so an unauthenticated caller cannot
+  hold connections open. (The Host and Origin check runs first, so a foreign host still gets 421.)
 
 ## Limits
 
