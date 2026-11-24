@@ -101,12 +101,12 @@ def load_runs(root, snapshot: str, problems: list | None = None) -> list[dict]:
     return [r for r in runs if r is not None]
 
 
-def load_invalid_runs(root, snapshot: str) -> list[dict]:
+def load_invalid_runs(root, snapshot: str, problems: list[str] | None = None) -> list[dict]:
     """Runs that were invalid and moved aside for a rerun, reported separately from the results."""
     base = Path(root) / snapshot
     if not base.exists():
         return []
-    runs = (_read(base, p, None) for p in sorted(base.rglob("*.json")) if _is_invalid_file(p))
+    runs = (_read(base, p, problems) for p in sorted(base.rglob("*.json")) if _is_invalid_file(p))
     return [r for r in runs if r is not None]
 
 

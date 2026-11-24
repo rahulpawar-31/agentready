@@ -4,6 +4,7 @@ Run from ``backend`` with ``python -m app.runner.report --before before --after 
 """
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -12,7 +13,8 @@ from .results import load_invalid_runs, load_runs
 from .tasks import TASK_IDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-COMPARE_CONFIG = ("criteria_sha256", "harness_sha256", "label_sha256", "model", "max_turns",
+SNAPSHOT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+COMPARE_CONFIG = ("criteria_sha256", "harness_sha256", "label_sha256", "model", "preregistered", "max_turns",
                   "request_budget", "rate_limit_seconds", "step_limit", "toolset_version")
 
 
@@ -35,16 +37,22 @@ def _load_snapshot(root: Path, snapshot: str, labels: dict[str, dict], repeats: 
     runs_by_key = {}
     invalid_by_key = defaultdict(list)
     raw_runs = load_runs(root, snapshot, problems)
-    invalid_runs = load_invalid_runs(root, snapshot)
+    invalid_runs = load_invalid_runs(root, snapshot, problems)
 
     def accept(row: dict, invalid_file: bool) -> None:
         rel = f"{row.get('site', '?')}/{row.get('task', '?')}#{row.get('repeat', '?')}"
         site, task, repeat = row.get("site"), row.get("task"), row.get("repeat")
         result, config = row.get("result"), row.get("config")
+        if not isinstance(site, str):
+            problems.append(f"{snapshot}/{rel}: site must be a string")
+            return
         if site not in labels:
             problems.append(f"{snapshot}/{rel}: no committed site label")
             return
-        if task not in TASK_IDS or not isinstance(repeat, int) or isinstance(repeat, bool) or repeat < 1:
+        if not isinstance(task, str) or task not in TASK_IDS:
+            problems.append(f"{snapshot}/{rel}: invalid task or repeat number")
+            return
+        if not isinstance(repeat, int) or isinstance(repeat, bool) or not 1 <= repeat <= repeats:
             problems.append(f"{snapshot}/{rel}: invalid task or repeat number")
             return
         if not isinstance(result, dict) or not isinstance(config, dict):
@@ -224,11 +232,20 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if not 1 <= args.repeats <= 10:
         parser.error("--repeats must be between 1 and 10")
-    if args.before == args.after:
+    if not SNAPSHOT.fullmatch(args.before) or not SNAPSHOT.fullmatch(args.after):
+        parser.error("snapshot names must match [A-Za-z0-9_-]{1,64}")
+    before_dir = (args.results / args.before).resolve()
+    after_dir = (args.results / args.after).resolve()
+    if before_dir == after_dir:
         parser.error("--before and --after must name different snapshots")
     report = build_report(args.results, args.labels, args.before, args.after, args.repeats)
     output = json.dumps(report, indent=2, ensure_ascii=False) + "\n" if args.format == "json" else to_markdown(report)
     if args.output:
+        output_path = args.output.resolve()
+        results_root = args.results.resolve()
+        protected = {path.resolve() for path in results_root.rglob("*.json") if path.is_file()}
+        if output_path in protected:
+            parser.error("--output must not replace a benchmark run file")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output, encoding="utf-8")
     else:

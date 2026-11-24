@@ -27,6 +27,7 @@ marks audit-check accuracy as **not measured**. To report per-check agreement an
 first preregister expected pass/fail labels for every audit check and save the corresponding audit
 findings for each site and snapshot. Do not infer those labels from task results.
 
-The command exits nonzero when it finds malformed result files, results without a corresponding site
-label, or duplicate valid runs. Missing repeats and missing snapshots are shown in the report as
-incomplete samples rather than silently treated as failures.
+The command exits nonzero when it finds malformed valid or invalid result files, results without a
+corresponding site label, or duplicate valid runs. Missing repeats and missing snapshots are shown in
+the report as incomplete samples rather than silently treated as failures. It refuses to write over an
+existing run file, and refuses before/after names that resolve to the same snapshot directory.
