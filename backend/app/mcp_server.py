@@ -4,8 +4,10 @@ The tools call the same route functions as the REST API (through `core`, which i
 same proof-of-control gate. There is deliberately no tool to approve, reject or export a fix: that is the site
 owner's decision, made in the web UI or REST API.
 """
+import contextlib
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -14,6 +16,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
 logger = logging.getLogger("agentready.mcp")
@@ -24,6 +27,10 @@ EVIDENCE_CLIP = 500
 DIFF_CLIP = 8000
 REPORT_ID = re.compile(r"^[0-9a-f]{32}$")
 GENERIC_FAILURE = "The request failed."
+MCP_PATH = "/mcp"
+MAX_REQUEST_BYTES = 65536
+DEFAULT_ALLOWED_HOSTS = ["localhost:*", "127.0.0.1:*", "[::1]:*"]
+DEFAULT_ALLOWED_ORIGINS = ["http://localhost:*", "http://127.0.0.1:*"]
 
 INSTRUCTIONS = (
     "AgentReady audits whether an AI agent can find and use a website. Auditing a site needs proof of control: the "
@@ -162,3 +169,34 @@ def build_server(core) -> MCPServer:
         return decorate({"report_id": rid, **body, "approval": APPROVAL_NOTE})
 
     return server
+
+
+def _env_list(name: str, default: list) -> list:
+    raw = os.environ.get(name, "")
+    items = [x.strip() for x in raw.split(",") if x.strip()]
+    return items or list(default)
+
+
+def make_mcp_app(server: MCPServer, allowed_hosts: list | None = None, allowed_origins: list | None = None):
+    """The streamable-HTTP ASGI app for `server`, served at exactly /mcp. DNS-rebinding protection is always on:
+    a request whose Host or Origin is not in the allowed lists is refused. A list given here (or in the
+    AGENTREADY_MCP_ALLOWED_HOSTS / AGENTREADY_MCP_ALLOWED_ORIGINS environment variables, comma separated) replaces
+    the localhost defaults. Request bodies are limited to 64 KB."""
+    hosts = allowed_hosts if allowed_hosts is not None else _env_list("AGENTREADY_MCP_ALLOWED_HOSTS",
+                                                                      DEFAULT_ALLOWED_HOSTS)
+    origins = allowed_origins if allowed_origins is not None else _env_list("AGENTREADY_MCP_ALLOWED_ORIGINS",
+                                                                            DEFAULT_ALLOWED_ORIGINS)
+    security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts,
+                                         allowed_origins=origins)
+    return server.streamable_http_app(streamable_http_path=MCP_PATH, max_request_body_size=MAX_REQUEST_BYTES,
+                                      transport_security=security)
+
+
+def mcp_lifespan(server: MCPServer):
+    """A FastAPI `lifespan=` that runs the server's session manager. Build the app with `make_mcp_app` first (that
+    creates the session manager); it can only be run once per server instance."""
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        async with server.session_manager.run():
+            yield
+    return lifespan

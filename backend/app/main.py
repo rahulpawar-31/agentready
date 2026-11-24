@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import sys
 import threading
 from collections import OrderedDict
 from dataclasses import asdict
@@ -17,6 +18,7 @@ from .fixes.propose import propose_fixes
 from .fixes.queue import FixQueue, InvalidTransition, NotApproved, UnknownFix, summary
 from .fixes.validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_stub
 from .fetch import CachedFetcher, GuardedFetcher, HttpxFetcher, default_resolver, is_public
+from .mcp_server import build_server, make_mcp_app, mcp_lifespan
 from .models import Report
 from .ownership import default_txt_lookup, make_token, verify_ownership
 
@@ -34,7 +36,9 @@ MAX_REPORTS = 200
 SNAPSHOT_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 _SNAPSHOT = re.compile(SNAPSHOT_PATTERN)
 
-app = FastAPI(title="AgentReady")
+# The MCP server (Plan 4) calls this module's route functions by name when a tool runs, so it can be built before them.
+mcp_server = build_server(sys.modules[__name__])
+app = FastAPI(title="AgentReady", lifespan=mcp_lifespan(mcp_server))
 _reports: "OrderedDict[str, Report]" = OrderedDict()
 _baselines: "dict[str, Baseline]" = {}                 # what each audit's snapshot saw; evicted with its report
 _proposals: "dict[str, tuple]" = {}                    # report id -> (FixQueue, skipped list); evicted with its report
@@ -249,3 +253,8 @@ def export_fix(rid: str, fid: str):
             raise HTTPException(409, str(e))
         return {"filename": bundle.filename, "content": bundle.content, "diff": bundle.diff,
                 "sha256": bundle.sha256, "note": bundle.note}
+
+
+# --- MCP (Plan 4): the same process, so agents and the owner see the same reports and fix queues. Mounted last, so
+# every route above wins. The endpoint is /mcp. There is no tool to approve or export a fix.
+app.mount("/", make_mcp_app(mcp_server))
