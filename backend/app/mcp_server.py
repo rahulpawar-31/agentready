@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 from fastapi import HTTPException
+from pydantic import ValidationError
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -106,6 +107,20 @@ def dep(core, fn):
     return core.app.dependency_overrides.get(fn, fn)()
 
 
+async def _in_thread(label: str, fn):
+    """Run a blocking route function off the event loop and turn every failure into a fixed tool error: the
+    exception text of an unexpected failure stays in the server and is never sent to the client."""
+    try:
+        return await anyio.to_thread.run_sync(fn)
+    except HTTPException as exc:
+        raise map_http_error(exc) from None
+    except ToolError:
+        raise
+    except Exception as exc:                                   # noqa: BLE001 - fixed message for the client
+        logger.warning("%s failed: %s", label, type(exc).__name__)
+        raise tool_error("failed", message=GENERIC_FAILURE) from None
+
+
 def build_server(core) -> MCPServer:
     """Build the server. `core` is the `app.main` module; its attributes are looked up when a tool runs."""
     server = MCPServer("agentready", instructions=INSTRUCTIONS)
@@ -114,7 +129,16 @@ def build_server(core) -> MCPServer:
                  annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False,
                                              idempotent_hint=True, open_world_hint=True))
     async def audit_site(url: str, snapshot: str = "default") -> dict:
-        raise tool_error("failed", message=GENERIC_FAILURE)
+        try:
+            req = core.AuditRequest(url=url, snapshot=snapshot)
+        except ValidationError:
+            raise tool_error("invalid_request", message="snapshot must match ^[A-Za-z0-9_-]{1,64}$") from None
+
+        def work():
+            return core.post_audit(req, dep(core, core.get_txt_lookup), dep(core, core.get_resolver))
+
+        body = await _in_thread("audit_site", work)
+        return decorate({"report_id": body["id"], **{k: v for k, v in body.items() if k != "id"}})
 
     @server.tool(name="get_report", description=GET_REPORT_DESCRIPTION,
                  annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False))
