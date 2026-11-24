@@ -18,6 +18,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 logger = logging.getLogger("agentready.mcp")
 
@@ -177,26 +179,70 @@ def _env_list(name: str, default: list) -> list:
     return items or list(default)
 
 
-def make_mcp_app(server: MCPServer, allowed_hosts: list | None = None, allowed_origins: list | None = None):
-    """The streamable-HTTP ASGI app for `server`, served at exactly /mcp. DNS-rebinding protection is always on:
-    a request whose Host or Origin is not in the allowed lists is refused. A list given here (or in the
-    AGENTREADY_MCP_ALLOWED_HOSTS / AGENTREADY_MCP_ALLOWED_ORIGINS environment variables, comma separated) replaces
-    the localhost defaults. Request bodies are limited to 64 KB."""
+def _resolve_lists(allowed_hosts, allowed_origins) -> tuple[list, list]:
     hosts = allowed_hosts if allowed_hosts is not None else _env_list("AGENTREADY_MCP_ALLOWED_HOSTS",
                                                                       DEFAULT_ALLOWED_HOSTS)
     origins = allowed_origins if allowed_origins is not None else _env_list("AGENTREADY_MCP_ALLOWED_ORIGINS",
                                                                             DEFAULT_ALLOWED_ORIGINS)
+    return list(hosts), list(origins)
+
+
+def make_mcp_app(server: MCPServer, allowed_hosts: list | None = None, allowed_origins: list | None = None):
+    """The SDK's streamable-HTTP ASGI app for `server` (its one route is exactly /mcp). DNS-rebinding protection is
+    always on: a request whose Host or Origin is not in the allowed lists is refused. A list given here (or in the
+    AGENTREADY_MCP_ALLOWED_HOSTS / AGENTREADY_MCP_ALLOWED_ORIGINS environment variables, comma separated) replaces
+    the localhost defaults. Request bodies are limited to 64 KB.
+
+    Building this app is what creates `server.session_manager` (an SDK internal: it exists only after
+    `streamable_http_app()` has run, and it can be run only once per server instance, which is why `mcp_lifespan`
+    builds a fresh server each time it starts)."""
+    hosts, origins = _resolve_lists(allowed_hosts, allowed_origins)
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts,
                                          allowed_origins=origins)
     return server.streamable_http_app(streamable_http_path=MCP_PATH, max_request_body_size=MAX_REQUEST_BYTES,
                                       transport_security=security)
 
 
-def mcp_lifespan(server: MCPServer):
-    """A FastAPI `lifespan=` that runs the server's session manager. Build the app with `make_mcp_app` first (that
-    creates the session manager); it can only be run once per server instance."""
+class McpRuntime:
+    """What a running lifespan keeps on `app.state.mcp_runtime`: the SDK app for this run."""
+
+    def __init__(self, asgi_app, hosts: list, origins: list):
+        self.app = asgi_app
+        self.hosts = hosts
+        self.origins = origins
+
+
+def mcp_lifespan(core, *, allowed_hosts: list | None = None, allowed_origins: list | None = None):
+    """A FastAPI `lifespan=` for an app that serves MCP. Each start builds a fresh MCP server and session manager
+    from `core` (the `app.main` module), so the application can be started any number of times in one process."""
     @contextlib.asynccontextmanager
     async def lifespan(app):
+        server = build_server(core)
+        hosts, origins = _resolve_lists(allowed_hosts, allowed_origins)
+        mcp_app = make_mcp_app(server, hosts, origins)
         async with server.session_manager.run():
-            yield
+            app.state.mcp_runtime = McpRuntime(mcp_app, hosts, origins)
+            try:
+                yield
+            finally:
+                app.state.mcp_runtime = None
     return lifespan
+
+
+class McpGateway:
+    """The ASGI endpoint for exactly /mcp. It is one ordinary route (not a mount), so every other path and every
+    wrong-method or trailing-slash request is answered by the REST application exactly as before."""
+
+    async def __call__(self, scope, receive, send):
+        runtime = getattr(scope["app"].state, "mcp_runtime", None)
+        if runtime is None:
+            response = JSONResponse({"detail": "The MCP endpoint is not running (the application's lifespan has not "
+                                               "started)."}, status_code=503)
+            await response(scope, receive, send)
+            return
+        await runtime.app(scope, receive, send)
+
+
+def install_mcp(app) -> None:
+    """Add the /mcp route to `app` (after its REST routes) and use `mcp_lifespan(...)` as the app's lifespan."""
+    app.router.routes.append(Route(MCP_PATH, McpGateway()))

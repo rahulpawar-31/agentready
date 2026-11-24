@@ -503,3 +503,14 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
 3. **Loose assertions tightened.** Bad URLs must be `invalid_request` with zero site requests (the plan also accepted `control_not_proven`); `main._reports == {} or len(...) == 0` became `len(...) == 0`; the `__import__` in the unverified-site test became a normal import.
 4. **Env variables replace the default host lists** (they do not extend them); documented in `docs/mcp.md`.
 5. The repo venv is Python 3.13 (the plan text said 3.12); `mcp` 2.3.0 installs cleanly beside FastAPI 0.165 and Starlette 1.10.
+
+
+## Corrections after the adversarial review (PR #5)
+- **Group A (REST parity, lifespan).** The plan mounted the MCP app at "/" and built one module-level server. A mount at
+  "/" swallowed the REST API's 405, 307 and JSON 404 answers, and the session manager (one run per instance) made a
+  second start of the app fail. Now: `install_mcp(app)` adds one `Route("/mcp")` after the REST routes, and
+  `mcp_lifespan(core)` builds a fresh server and session manager each time the app starts, stores the SDK app on
+  `app.state.mcp_runtime`, and the route answers 503 while no lifespan is running. `main.mcp_server` no longer exists.
+  Tests: `tests/test_mcp_rest_parity.py` (status, `Allow`, `Location` and body for the REST error paths, hard-coded from
+  the pre-MCP application), `tests/test_mcp_http.py` (two starts, 503, `/mcp/` redirect, a real client against
+  `main.app` with its own lifespan).

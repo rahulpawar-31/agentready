@@ -11,8 +11,15 @@ From `backend/`:
 
     AGENTREADY_SECRET=choose-a-long-random-value uvicorn app.main:app --port 8000
 
-The MCP endpoint is `http://localhost:8000/mcp` (streamable HTTP, exactly `/mcp`, no redirect). Any MCP client that
-speaks streamable HTTP can connect. For Claude Code the command is:
+The MCP endpoint is `http://localhost:8000/mcp` (streamable HTTP). Any MCP client that speaks streamable HTTP can
+connect.
+
+The endpoint is one ordinary route added after the REST routes, not a mount, so every other path and every
+wrong-method or trailing-slash request is answered by the REST API exactly as it was before MCP existed (405 with an
+`Allow` header, 307 redirects, the JSON 404). `/mcp/` therefore redirects (307) to `/mcp`, like `/audit/` does.
+The MCP server and its session manager are created when the application starts (its lifespan) and are rebuilt every
+time it starts, so the app can be started more than once in a process (tests do). A request to `/mcp` while the
+lifespan is not running gets a 503 with a short JSON message. For Claude Code the command is:
 
     claude mcp add --transport http agentready http://localhost:8000/mcp
 

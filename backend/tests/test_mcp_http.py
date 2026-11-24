@@ -1,5 +1,6 @@
-"""The MCP endpoint over HTTP. Each test builds a fresh server and FastAPI app, because an MCP session manager
-can only be run once per server instance (the real app has one module-level server)."""
+"""The MCP endpoint over HTTP. The MCP server and its session manager are created inside each lifespan run, so the
+real `main.app` can be started any number of times; most tests here still build a small app of their own so they can
+choose the allowed hosts."""
 import json
 import threading
 import time
@@ -11,8 +12,7 @@ from fastapi.testclient import TestClient
 from mcp.client import Client
 
 from app import main
-from app.mcp_server import (DEFAULT_ALLOWED_HOSTS, DEFAULT_ALLOWED_ORIGINS, build_server, make_mcp_app,
-                            mcp_lifespan)
+from app.mcp_server import DEFAULT_ALLOWED_HOSTS, DEFAULT_ALLOWED_ORIGINS, install_mcp, mcp_lifespan
 from tests.mcp_helpers import error_json, run
 
 INIT = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -21,17 +21,38 @@ HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "app
 
 
 def fresh_app(**kw):
-    server = build_server(main)
-    app = FastAPI(lifespan=mcp_lifespan(server))
-    app.mount("/", make_mcp_app(server, **kw))
+    app = FastAPI(lifespan=mcp_lifespan(main, **kw))
+    install_mcp(app)
     return app
 
 
-def test_the_real_app_mounts_the_mcp_endpoint_last_and_keeps_every_rest_route():
+def test_the_real_app_serves_mcp_at_exactly_slash_mcp_as_one_route_and_keeps_every_rest_route():
     paths = [getattr(r, "path", "") for r in main.app.routes]
     assert "/audit" in paths and "/report/{rid}/fixes" in paths and "/report/{rid}/fixes/{fid}/export" in paths
-    assert getattr(main.app.routes[-1], "path", None) in ("", "/")             # the mount comes after all REST routes
-    assert main.mcp_server is not None and main.app.router.lifespan_context is not None
+    assert "/mcp" in paths and paths.index("/mcp") > paths.index("/report/{rid}/fixes/{fid}/export")
+    assert not any(type(r).__name__ == "Mount" for r in main.app.routes)       # a mount at "/" swallowed REST errors
+
+
+def test_the_real_app_can_be_started_any_number_of_times_in_one_process():
+    for _ in range(2):
+        with TestClient(main.app, base_url="http://localhost:8000") as c:
+            assert c.get("/ownership-token", params={"domain": "x.test"}).status_code == 200
+            ok = c.post("/mcp", headers=HEADERS, json=INIT)
+            assert ok.status_code == 200 and "serverInfo" in ok.text
+
+
+def test_the_mcp_endpoint_without_a_running_lifespan_is_a_503_not_a_crash():
+    c = TestClient(main.app, base_url="http://localhost:8000", raise_server_exceptions=False)
+    r = c.post("/mcp", headers=HEADERS, json=INIT)
+    assert r.status_code == 503 and "not running" in r.json()["detail"]
+    assert c.get("/ownership-token", params={"domain": "x.test"}).status_code == 200      # REST is unaffected
+
+
+def test_a_trailing_slash_redirects_like_every_other_route_while_the_exact_path_does_not():
+    with TestClient(main.app, base_url="http://localhost:8000", follow_redirects=False) as c:
+        r = c.post("/mcp/", headers=HEADERS, json=INIT)
+        assert r.status_code == 307 and r.headers["location"].endswith("/mcp")
+        assert c.post("/mcp", headers=HEADERS, json=INIT).status_code == 200
 
 
 def test_initialize_works_for_a_local_host_and_is_refused_for_a_foreign_host():
@@ -89,7 +110,7 @@ def test_oversized_bodies_are_refused_but_a_normal_one_just_under_the_limit_is_n
 def test_unknown_paths_still_404_and_rest_still_works():
     c = TestClient(main.app)
     assert c.get("/report/" + "0" * 32).status_code == 404
-    assert c.get("/definitely-not-a-route").status_code == 404
+    assert c.get("/definitely-not-a-route").json() == {"detail": "Not Found"}
     assert c.get("/ownership-token", params={"domain": "x.test"}).status_code == 200
 
 
@@ -124,3 +145,13 @@ def test_a_real_mcp_client_talks_to_a_real_server_over_http():
         names, missing = run(go())
     assert names == ["audit_site", "get_report", "propose_fixes"]
     assert error_json(missing)["error"] == "not_found"
+
+
+def test_a_real_mcp_client_talks_to_the_real_app_with_its_own_lifespan():
+    """The production wiring: main.app, its lifespan, /mcp. (A mutation that forgot to wire the lifespan survived
+    every test that built its own app.)"""
+    with Live(main.app) as live:
+        async def go():
+            async with Client(f"http://127.0.0.1:{live.port}/mcp") as c:
+                return sorted(t.name for t in (await c.list_tools()).tools)
+        assert run(go()) == ["audit_site", "get_report", "propose_fixes"]
