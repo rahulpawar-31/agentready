@@ -494,3 +494,12 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
 1. Same-process HTTP mount (assumed) versus a separate stdio server (would not share reports with the owner's UI).
 2. No approve/export over MCP (assumed, and recommended).
 3. Whether to add a read-only `list_reports` tool later (not in this plan).
+
+---
+
+## Corrections found while building (added after the build)
+1. **Error text is prefixed.** The SDK sends a `ToolError` to the client as `Error executing tool <name>: <message>`, so `json.loads(result.content[0].text)` cannot parse it. The tests use `error_json()` (parse from the first `{`).
+2. **Tests that could not fail.** (a) Task 1's "bad arguments are a tool error" test passed against the stub; it was dropped and a malformed-id/non-string test added in Task 3. (b) The slow-audit test started its timer after a sleep that a blocked event loop also delays, so it passed even with the audit blocking the loop; the timer now starts before the sleep and the test was mutation-checked (inline instead of `to_thread` makes it fail). (c) The oversized-body test sent invalid JSON-RPC, which returns 400 with or without a limit; it now sends a valid, padded initialize (60 KB passes, 70 KB gives 413) and fails if the limit is removed.
+3. **Loose assertions tightened.** Bad URLs must be `invalid_request` with zero site requests (the plan also accepted `control_not_proven`); `main._reports == {} or len(...) == 0` became `len(...) == 0`; the `__import__` in the unverified-site test became a normal import.
+4. **Env variables replace the default host lists** (they do not extend them); documented in `docs/mcp.md`.
+5. The repo venv is Python 3.13 (the plan text said 3.12); `mcp` 2.3.0 installs cleanly beside FastAPI 0.165 and Starlette 1.10.
