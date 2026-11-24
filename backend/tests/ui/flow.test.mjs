@@ -18,6 +18,14 @@ const mkFix = (id, status = "proposed") => ({ id, kind: id, path: id === "llms_t
   description: "d", finding_id: id, status, diff: `--- /dev/null\n+++ b/${id}\n+${id}\n`, diff_kind: "full", warning: "", note: "", sha256: "a".repeat(64) });
 
 const reply = (status, body) => ({ status, ok: status < 300, async json() { return body; } });
+const within = (promise, ms, what) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms).unref())]);
+const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+function fakeTimer() {
+  const timers = [];
+  return { timers, set(fn, ms) { timers.push({ fn, ms, live: true }); return timers.length; },
+    clear(id) { if (timers[id - 1]) timers[id - 1].live = false; },
+    fire(ms) { for (const t of timers) if (t.live && t.ms === ms) { t.live = false; t.fn(); } } };
+}
 
 function server(opts = {}) {
   const calls = [];
@@ -38,7 +46,8 @@ function server(opts = {}) {
     if (key === `GET /report/${RID}/fixes`) return s.noFixes ? reply(404, { detail: "No fixes proposed yet" }) : reply(200, { fixes: Object.values(fixes), skipped: [] });
     let m = /^POST \/report\/[0-9a-f]{32}\/fixes\/([a-z_]+)\/(approve|reject)$/.exec(key);
     if (m) {
-      if (s.conflict) return reply(409, { detail: "SECRET server text" });
+      if (s.conflict) return reply(409, { detail: s.conflictDetail ?? "SECRET server text" });
+      if (s.lie) return reply(200, { ...fixes[m[1]], status: s.lie });
       fixes[m[1]].status = m[2] === "approve" ? "approved" : "rejected";
       return reply(200, fixes[m[1]]);
     }
@@ -72,8 +81,9 @@ async function boot(opts = {}) {
   const copied = [];
   const clipboard = opts.clipboard === undefined ? { writeText: async (t) => { copied.push(t); } } : opts.clipboard;
   const storage = opts.storage === undefined ? memory() : opts.storage;
-  const app = await start({ document: doc, fetch: srv.fetch, storage, clipboard,
+  const app = await start({ document: doc, fetch: srv.fetch, storage, clipboard, timer: opts.timer,
     downloadBlob: (blob, name) => downloads.push({ blob, name }), win: opts.win ?? null, now: opts.now ?? (() => new Date(Date.UTC(2026, 10, 24, 9, 5, 7))) });
+  if (!opts.noWait) await app.idle();
   return { doc, els, srv, app, downloads, copied, storage };
 }
 const status = (els) => els["status"].textContent;
@@ -192,15 +202,24 @@ test("revoking an approval removes Download and Copy again", async () => {
   assert.equal(byText(t.els["step-fixes"], "button", "Download").length, 0);
 });
 
-test("(h) a conflict from the server shows one fixed sentence and never the server's text", async () => {
+test("(h) a conflict shows the server's short reason as plain text, with advice only when the fix was rejected", async () => {
   const t = await boot();
   await toReport(t);
   await click(t, "step-report", "Propose fixes");
   t.srv.conflict = true;
+  t.srv.conflictDetail = "The fix changed after it was approved; approve it again";
   await click(t, "step-fixes", "Approve");
-  assert.ok(status(t.els).includes("That action is not allowed right now."));
-  assert.ok(!allSerialized(t.els).includes("SECRET"));
+  assert.ok(status(t.els).includes("The server did not allow that: The fix changed after it was approved; approve it again"), status(t.els));
+  assert.ok(!status(t.els).includes("Run a new audit"), "no advice that does not apply");
   assert.equal(byText(t.els["step-fixes"], "button", "Approve").length, 2, "nothing changed");
+  t.srv.conflictDetail = "a rejected fix cannot be approved again; the only way back is a new audit";
+  await click(t, "step-fixes", "Approve");
+  assert.ok(status(t.els).endsWith("Run a new audit to start again."), status(t.els));
+  t.srv.conflictDetail = "<img src=x onerror=alert(1)>" + "y".repeat(500);
+  await click(t, "step-fixes", "Approve");
+  assert.ok(status(t.els).includes("<img"), "it is shown as text");
+  assert.ok(!serialize(t.els["status"]).includes("<img"), "and escaped");
+  assert.ok(status(t.els).length < 300, String(status(t.els).length));
 });
 
 test("(i) re-audit sends a fresh rerun- snapshot, replaces the report and clears the fixes", async () => {
@@ -288,21 +307,37 @@ test("a rejected address from the server is shown as short clipped text, not mar
   assert.ok(status(t.els).length < 260);
 });
 
-test("the default downloader clicks a temporary link with a safe name and cleans up", () => {
+test("the default downloader clicks a temporary link with a safe name, removes it, and revokes the object address only after a delay", () => {
   const doc = createFakeDocument();
   const events = [];
+  const timer = fakeTimer();
   const urlApi = { createObjectURL: () => { events.push("create"); return "blob:x"; }, revokeObjectURL: (u) => events.push("revoke " + u) };
-  const down = makeDownloader(doc, urlApi);
+  const down = makeDownloader(doc, urlApi, timer);
   const clicks = [];
   const realCreate = doc.createElement;
-  doc.createElement = (tag) => { const el = realCreate(tag); el.click = () => clicks.push([el.tagName, el.download, el.href]); return el; };
+  doc.createElement = (tag) => { const el = realCreate(tag); el.click = () => { events.push("click"); clicks.push([el.tagName, el.download, el.href]); }; return el; };
   down(new Blob(["x"]), "../../evil name.txt");
   assert.equal(clicks.length, 1);
   const [tag, name, href] = clicks[0];
   assert.equal(tag, "a");
   assert.equal(href, "blob:x");
   assert.ok(!name.includes("/") && !name.startsWith(".") && name.endsWith("evil_name.txt"), name);
-  assert.deepEqual(events, ["create", "revoke blob:x"]);
+  assert.deepEqual(events, ["create", "click"], "the address is still valid right after the click");
+  assert.equal(doc.body.children.length, 0, "the temporary link is gone");
+  timer.fire(29999);
+  assert.deepEqual(events, ["create", "click"]);
+  timer.fire(30000);
+  assert.deepEqual(events, ["create", "click", "revoke blob:x"]);
+});
+
+test("a revoke that throws is swallowed", () => {
+  const doc = createFakeDocument();
+  const timer = fakeTimer();
+  const down = makeDownloader(doc, { createObjectURL: () => "blob:x", revokeObjectURL: () => { throw new Error("gone"); } }, timer);
+  const realCreate = doc.createElement;
+  doc.createElement = (tag) => { const el = realCreate(tag); el.click = () => {}; return el; };
+  down(new Blob(["x"]), "a.txt");
+  assert.doesNotThrow(() => timer.fire(30000));
 });
 
 // ---------------------------------------------------------------- Group A: a body that cannot be drawn never wedges the page
@@ -375,4 +410,116 @@ test("printing opens every finding row, and closes again the ones that were clos
 test("a page without a window object still starts", async () => {
   const t = await boot({ win: null });
   assert.equal(byTag(t.els["step-url"], "input").length, 1);
+});
+
+// ---------------------------------------------------------------- Group C: flow robustness
+test("a failed address lookup leaves the report, the saved id and the audited site alone", async () => {
+  const t = await boot();
+  await toReport(t);
+  t.srv.networkDown = true;
+  await enter(t, "other.test");
+  assert.ok(status(t.els).includes("Could not reach AgentReady"));
+  assert.ok(shown(t.els, "step-report"), "the report is still there");
+  assert.deepEqual([...t.storage.m.values()], [RID], "and so is its saved id");
+  assert.equal(t.app.store.get().site, "https://x.test");
+  t.srv.networkDown = false;
+  await click(t, "step-report", "Re-audit with fresh pages");
+  assert.equal(t.srv.audits.at(-1).url, "https://x.test", "re-audit still targets the audited site");
+});
+
+test("a successful lookup for a new site clears the old report and its saved id", async () => {
+  const t = await boot();
+  await toReport(t);
+  await enter(t, "other.test");
+  assert.ok(!shown(t.els, "step-report") && !shown(t.els, "step-fixes"));
+  assert.equal(t.storage.m.size, 0);
+  assert.equal(t.app.store.get().site, "https://other.test");
+});
+
+test("a restore that finishes after the person chose another site is discarded", async () => {
+  const storage = memory();
+  storage.setItem("agentready.report", RID);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const srv = server({ verified: true });
+  const original = srv.fetch;
+  srv.fetch = async (path, init) => { if (init.method === "GET" && path === `/report/${RID}`) await gate; return original(path, init); };
+  const t = await boot({ storage, server: srv, noWait: true });
+  const [input] = byTag(t.els["step-url"], "input");
+  input.value = "other.test";
+  byTag(t.els["step-url"], "form")[0].dispatch("submit");
+  await flush();                                            // the restore is still waiting on the gate, so do not wait for idle yet
+  assert.ok(shown(t.els, "step-verify"));
+  release();
+  await t.app.idle();
+  assert.ok(!shown(t.els, "step-report") && !shown(t.els, "step-fixes"), "the late restore drew nothing");
+  assert.ok(shown(t.els, "step-verify"), "the new site's steps stay");
+  assert.equal(t.app.store.get().site, "https://other.test");
+});
+
+test("a click that is dropped because another action is running says so", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const srv = server({ verified: true });
+  const original = srv.fetch;
+  srv.fetch = async (path, init) => { if (init.method === "POST" && path === "/audit") await gate; return original(path, init); };
+  const t = await boot({ server: srv });
+  await enter(t);
+  button(t.els, "step-verify", "Verify and audit").click();
+  await flush();
+  const [input] = byTag(t.els["step-url"], "input");
+  input.value = "other.test";
+  byTag(t.els["step-url"], "form")[0].dispatch("submit");
+  await flush();
+  assert.equal(status(t.els), "Please wait for the current action to finish.");
+  assert.equal(t.srv.calls.filter((c) => c.key.startsWith("GET /ownership-token")).length, 1, "the dropped click made no request");
+  release();
+  await t.app.idle();
+  assert.ok(shown(t.els, "step-report"));
+});
+
+test("a clipboard that never answers is given up on after 10 seconds and Copy works again", async () => {
+  const timer = fakeTimer();
+  const t = await boot({ timer, clipboard: { writeText: () => new Promise(() => {}) } });
+  await toReport(t);
+  await click(t, "step-report", "Propose fixes");
+  await click(t, "step-fixes", "Approve");
+  button(t.els, "step-fixes", "Copy").click();
+  await flush();
+  assert.equal(button(t.els, "step-fixes", "Copy").hasAttribute("disabled"), true, "still waiting");
+  timer.fire(10000);
+  await within(t.app.idle(), 1000, "the copy action to give up");
+  assert.ok(status(t.els).includes("Copy is not available in this browser. Use Download instead."));
+  assert.equal(button(t.els, "step-fixes", "Copy").hasAttribute("disabled"), false);
+});
+
+test("approve, reject and revoke each say what happened, and only when the server's answer agrees", async () => {
+  const t = await boot();
+  await toReport(t);
+  await click(t, "step-report", "Propose fixes");
+  await click(t, "step-fixes", "Approve");
+  assert.ok(status(t.els).startsWith("Approved. Nothing has been changed on your site."), status(t.els));
+  await click(t, "step-fixes", "Revoke approval");
+  assert.ok(status(t.els).startsWith("Approval revoked."), status(t.els));
+  await click(t, "step-fixes", "Reject");                       // the second card is still proposed
+  assert.ok(status(t.els).startsWith("Rejected. Nothing has been changed on your site."), status(t.els));
+  const u = await boot();
+  await toReport(u);
+  await click(u, "step-report", "Propose fixes");
+  u.srv.lie = "proposed";                                        // 200, but the fix is not approved
+  await click(u, "step-fixes", "Approve");
+  assert.ok(status(u.els).includes("Something went wrong on the server"), status(u.els));
+  assert.ok(!status(u.els).includes("Approved."));
+  assert.equal(byText(u.els["step-fixes"], "button", "Approve").length, 2, "the card is drawn from what the server said");
+  u.srv.lie = "approved";                                        // 200 for a reject, but the fix is approved
+  await click(u, "step-fixes", "Reject");
+  assert.ok(status(u.els).includes("Something went wrong on the server") && !status(u.els).includes("Rejected."));
+});
+
+test("a 403 from any step but the audit is 'the server refused', never the verification message", async () => {
+  const srv = withReply(server({ verified: true }), (p, i) => i.method === "POST" && p === `/report/${RID}/fixes`, () => reply(403, { detail: { token: "t" } }));
+  const t = await boot({ server: srv });
+  await toReport(t);
+  await click(t, "step-report", "Propose fixes");
+  assert.equal(status(t.els), "The server refused this request.");
 });

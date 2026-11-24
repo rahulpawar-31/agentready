@@ -15,7 +15,11 @@ const MSG = {
   network: "Could not reach AgentReady. Check that it is running and try again.",
   server: "Something went wrong on the server. Try again.",
   gone: "That report is no longer available. Run the audit again.",
-  conflict: "That action is not allowed right now. Run a new audit if this keeps happening.",
+  conflict: "That action is not allowed right now.",
+  conflictLead: "The server did not allow that:",
+  newAudit: "Run a new audit to start again.",
+  forbidden: "The server refused this request.",
+  wait: "Please wait for the current action to finish.",
   auditDone: "Audit finished.",
   reauditDone: "Re-audit finished. These results use freshly fetched pages.",
   proposing: "Preparing fixes.",
@@ -33,16 +37,21 @@ function failureMessage(result) {
     case "invalid": return result.message;
     case "unverified": return MSG.notVerified;
     case "not_found": return MSG.gone;
-    case "conflict": return MSG.conflict;
+    case "conflict": return result.detail ? `${MSG.conflictLead} ${result.detail}${/rejected/i.test(result.detail) ? ` ${MSG.newAudit}` : ""}` : MSG.conflict;
+    case "forbidden": return MSG.forbidden;
     case "busy": return MSG.busy;
     case "network": return MSG.network;
     default: return MSG.server;
   }
 }
 
+const REVOKE_AFTER_MS = 30000;      // some browsers cancel a download whose object address is revoked right after the click
+const CLIPBOARD_TIMEOUT_MS = 10000;
+const defaultTimer = { set: (fn, ms) => globalThis.setTimeout(fn, ms), clear: (id) => globalThis.clearTimeout(id) };
+
 // Browser-only helper: save a Blob through a temporary link. Kept out of dom.js on purpose, because that module never
 // accepts a link that points outside this app.
-export function makeDownloader(document, urlApi) {
+export function makeDownloader(document, urlApi, timer = defaultTimer) {
   return (blob, filename) => {
     const link = document.createElement("a");
     const url = urlApi.createObjectURL(blob);
@@ -52,11 +61,11 @@ export function makeDownloader(document, urlApi) {
     document.body.appendChild(link);
     link.click();
     if (link.parentNode) link.parentNode.removeChild(link);
-    urlApi.revokeObjectURL(url);
+    timer.set(() => { try { urlApi.revokeObjectURL(url); } catch { /* the address is already gone */ } }, REVOKE_AFTER_MS);
   };
 }
 
-export async function start({ document, fetch: fetchImpl, storage = null, clipboard = null, downloadBlob, now = () => new Date(), win = null }) {
+export async function start({ document, fetch: fetchImpl, storage = null, clipboard = null, downloadBlob, now = () => new Date(), win = null, timer = defaultTimer }) {
   const { clear } = makeDom(document);
   const api = createApi(fetchImpl);
   const store = createStore(storage);
@@ -69,14 +78,16 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
   if (Object.values(el).some((node) => node === null || node === undefined)) return { idle, store };
 
   let busy = false;
+  let actions = 0;            // counts the actions the person started, so a late restore can tell it was overtaken
   const say = (message) => { el.status.textContent = message; };
   const show = (section, node) => { clear(section); section.appendChild(node); section.removeAttribute("hidden"); };
   const hide = (section) => { clear(section); section.setAttribute("hidden", ""); };
   const focus = (id) => { const node = document.getElementById(id); if (node) node.focus(); };
 
   function run(button, task) {
-    if (busy) return;
+    if (busy) { say(MSG.wait); return; }
     busy = true;
+    actions += 1;
     if (button) button.setAttribute("disabled", "");
     const promise = (async () => {
       try { await task(); }
@@ -95,11 +106,12 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
     if (!site) { say(MSG.badAddress); focus("site-input"); return; }
     run(button, async () => {
       say("");
+      const result = await api.ownershipToken(site.domain);
+      if (!result.ok) { say(failureMessage(result)); return; }          // nothing is hidden or forgotten until the lookup worked
+      const node = renderInstructions(document, result.data, { onVerify });
       hide(el.report); hide(el.fixes); store.clearReportId();
       store.set({ site: site.url, domain: site.domain, report: null, fixes: null, step: "verify" });
-      const result = await api.ownershipToken(site.domain);
-      if (!result.ok) { say(failureMessage(result)); return; }
-      show(el.verify, renderInstructions(document, result.data, { onVerify }));
+      show(el.verify, node);
       focus("verify-heading");
     });
   }
@@ -166,8 +178,9 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
       const result = await (action === "approve" ? api.approve(id, fixId) : api.reject(id, fixId));
       if (!result.ok) { say(failureMessage(result)); return; }
       const current = store.get().fixes ?? { fixes: [], skipped: [] };
-      showFixes({ ...current, fixes: current.fixes.map((f) => (f.id === fixId ? result.data : f)) });
-      say(action === "approve" ? MSG.approved : wasApproved ? MSG.revoked : MSG.rejected);
+      showFixes({ ...current, fixes: current.fixes.map((f) => (f.id === fixId ? result.data : f)) });   // always drawn from what the server said
+      const expected = action === "approve" ? "approved" : "rejected";
+      say(result.data.status !== expected ? MSG.server : action === "approve" ? MSG.approved : wasApproved ? MSG.revoked : MSG.rejected);
       focus("fixes-heading");
     });
   }
@@ -191,13 +204,20 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
     });
   }
 
+  function withinTime(promise, ms) {
+    return new Promise((resolve, reject) => {
+      const id = timer.set(() => reject(new Error("timeout")), ms);
+      promise.then((v) => { timer.clear(id); resolve(v); }, (e) => { timer.clear(id); reject(e); });
+    });
+  }
+
   function onCopy(fixId, button) {
     run(button, async () => {
       const file = await exported(fixId);
       if (!file) return;
       try {
         if (!clipboard || typeof clipboard.writeText !== "function") throw new Error("no clipboard");
-        await clipboard.writeText(file.content);
+        await withinTime(Promise.resolve(clipboard.writeText(file.content)), CLIPBOARD_TIMEOUT_MS);
         say(MSG.copied);
       } catch {
         say(MSG.noCopy);
@@ -229,20 +249,23 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
   showUrlForm();
   const saved = store.loadReportId();
   if (saved) {
+    const startedAt = actions;
+    const overtaken = () => busy || actions !== startedAt;      // the person already started something else: leave it alone
     const restore = (async () => {
       try {
         const result = await api.report(saved);
+        if (overtaken()) return;
         if (!result.ok) { if (result.kind === "not_found") store.clearReportId(); return; }
         acceptReport({ id: saved, ...result.data });
         const fixes = await api.listFixes(saved);
+        if (overtaken()) return;
         if (fixes.ok) showFixes(fixes.data);
       } catch {
-        say(MSG.server);                         // the address form is already on the page and stays usable
+        if (!overtaken()) say(MSG.server);       // the address form is already on the page and stays usable
       }
     })();
     pending.add(restore);
-    await restore;
-    pending.delete(restore);
+    restore.finally(() => pending.delete(restore));
   }
   return { idle, store };
 }

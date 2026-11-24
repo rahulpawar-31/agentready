@@ -154,3 +154,32 @@ test("methods never throw, whatever the transport does", async () => {
   const r = await api.report(ID);
   assert.equal(r.ok, false);
 });
+
+// ---------------------------------------------------------------- Group C
+test("403 means 'unverified' only for the audit; on every other route it is 'forbidden' with a fixed sentence", async () => {
+  const body = { detail: { token: "SECRET-TOKEN", meta_tag: "<meta>" } };
+  const calls = {
+    ownershipToken: (api) => api.ownershipToken("x.test"), report: (api) => api.report(ID), proposeFixes: (api) => api.proposeFixes(ID),
+    listFixes: (api) => api.listFixes(ID), approve: (api) => api.approve(ID, "llms_txt"), reject: (api) => api.reject(ID, "llms_txt"),
+    exportFix: (api) => api.exportFix(ID, "llms_txt"),
+  };
+  for (const [name, call] of Object.entries(calls)) {
+    const r = await call(createApi(scripted(reply(403, body)).fetchImpl));
+    assert.equal(r.kind, "forbidden", name);
+    assert.equal(r.message, "The server refused this request.", name);
+    assert.equal(r.instructions, undefined, name);
+    assert.ok(!JSON.stringify(r).includes("SECRET-TOKEN"), name);
+  }
+  assert.equal((await createApi(scripted(reply(403, body)).fetchImpl).audit("https://x.test")).kind, "unverified");
+});
+
+test("a conflict carries the server's short detail clipped to 200 characters, and null when there is none", async () => {
+  let r = await createApi(scripted(reply(409, { detail: "The fix changed after it was approved; approve it again" })).fetchImpl).approve(ID, "llms_txt");
+  assert.equal(r.kind, "conflict");
+  assert.equal(r.detail, "The fix changed after it was approved; approve it again");
+  r = await createApi(scripted(reply(409, { detail: "d".repeat(900) })).fetchImpl).exportFix(ID, "llms_txt");
+  assert.ok(r.detail.length <= 201);
+  r = await createApi(scripted(reply(409, { detail: [{ msg: "SECRET-TEXT" }] })).fetchImpl).exportFix(ID, "llms_txt");
+  assert.equal(r.detail, null);
+  assert.ok(!JSON.stringify(r).includes("SECRET-TEXT"));
+});
