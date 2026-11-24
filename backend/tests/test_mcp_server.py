@@ -29,7 +29,7 @@ def test_exactly_three_tools_and_no_approve_or_export(server):
 def test_tool_annotations_say_what_each_tool_does(server):
     a = {t.name: t.annotations for t in tools_of(server)}
     assert a["get_report"].read_only_hint is True and a["get_report"].open_world_hint is False
-    assert a["audit_site"].read_only_hint is False and a["audit_site"].idempotent_hint is True
+    assert a["audit_site"].read_only_hint is False and a["audit_site"].idempotent_hint is False
     assert a["audit_site"].open_world_hint is True
     assert a["propose_fixes"].read_only_hint is False and a["propose_fixes"].idempotent_hint is True
     assert a["propose_fixes"].open_world_hint is False

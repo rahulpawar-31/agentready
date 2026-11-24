@@ -309,7 +309,7 @@ def build_server(core, *, clock=time.monotonic, host_interval: float = DEFAULT_H
 
     @server.tool(name="audit_site", description=AUDIT_DESCRIPTION,
                  annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False,
-                                             idempotent_hint=True, open_world_hint=True))
+                                             idempotent_hint=False, open_world_hint=True))
     async def audit_site(url: str, snapshot: str = "default") -> dict:
         try:
             req = core.AuditRequest(url=url, snapshot=snapshot)
