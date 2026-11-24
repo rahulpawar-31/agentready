@@ -35,18 +35,25 @@ configuration). What was tested: the official MCP Python client, over real HTTP,
 | `get_report(report_id)` | Returns a stored report. Read-only. |
 | `propose_fixes(report_id)` | Proposes an `llms.txt`, a JSON-LD snippet and an OpenAPI-to-MCP stub (when the site has an OpenAPI document), each with a diff, plus what was skipped and why. Safe to call again: it never resets a decision. Each fix has a `status` (`proposed`, `approved`, `rejected`) that shows the owner's decision. |
 
-Errors are JSON with a fixed `error` code: `control_not_proven`, `invalid_request`, `not_found` or `failed` (a fixed
-message; exception text is never sent to the client).
+Errors from our code are JSON with a fixed `error` code: `control_not_proven`, `invalid_request`, `not_found` or
+`failed` (a fixed message; exception text is never sent to the client). The SDK sends them as
+`Error executing tool <name>: {json}`, so parse from the first `{`. Errors raised by the SDK itself before our code runs
+(an argument of the wrong type or a missing argument, an unknown tool name) are the SDK's plain text, not our JSON; they
+echo only the caller's own input.
 
 ## What an agent cannot do
 
 There is **no tool to approve, reject or export a fix**, on purpose. Approval is the site owner's decision, made in
 the web interface or the REST API (`POST /report/{id}/fixes/{fix}/approve`, then `GET .../export`). An agent that
 could approve its own proposals would remove the human step that FR-6.3 exists for. A test pins the tool list to the
-three names above, and no tool result contains a `content` key in its JSON (the fix file itself is only available through the REST export).
+three names above.
 
-Note that a new file's diff shows the whole file, because the owner needs to review it. The diff is the review
-material; the gated step is the export (download or copy), and that is not available through MCP at all.
+What this does and does not hide: no tool result has a `content` key, and the content hash is left out of the MCP
+fix summaries. But the **diff of a new file is the file**: for `llms.txt` and the MCP stub every line is a `+` line, so
+an agent can reconstruct the text from the diff (up to the 8,000-byte clip; the full diff is in the REST API). That is
+by design, because the owner has to review exactly what would be exported. The gate controls the **export** (the
+download or copy action in the REST API), which MCP does not offer at all. It does not stop an agent from reading what
+was proposed.
 
 ## Safety model
 
@@ -55,11 +62,15 @@ material; the gated step is the export (download or copy), and that is not avail
 - **No new network path.** The tools add no fetching of their own. Site requests go through the existing guard (verified
   host only, redirects rechecked, pinned public addresses, rate limit, request budget). `get_report` and
   `propose_fixes` make no site requests.
-- **Site text is untrusted.** Evidence strings and diffs contain text taken from the audited website. Every result
-  carries `untrusted_content_notice`, evidence is clipped to 500 characters and each diff to 8,000 characters (the
-  fix then has `diff_truncated: true`; the full diff is in the REST API). The tool descriptions and the server
-  instructions say the same. This reduces, but cannot remove, the risk that a hostile site tries to instruct an agent
-  through the data it reports: an agent client should still treat these fields as data.
+- **Site text is untrusted.** Every string in a result can come from, or be derived from, the audited website: the
+  evidence, but also the `url` of a finding (a redirect `Location` header from the site ends up there), the check text,
+  fix descriptions and diffs. Every result carries `untrusted_content_notice` saying so. Every string field is clipped
+  to 300 bytes (UTF-8, never half a character) and a diff to 8,000 bytes (`diff_truncated: true`; the full diff is in
+  the REST API). The whole result is capped at 60,000 bytes: past that, finding evidence is dropped first, then lists
+  are shortened, and `result_truncated: true` is set. The tool descriptions and the server instructions say the same.
+  Clipping bounds the size; it cannot stop a short injection from fitting in 300 bytes. This reduces, but cannot
+  remove, the risk that a hostile site tries to instruct an agent through the data it reports: an agent client should
+  still treat these fields as data.
 - **Host and origin checks (DNS-rebinding protection) are on.** By default only `localhost:*`, `127.0.0.1:*` and
   `[::1]:*` are accepted as `Host`, and `http://localhost:*` and `http://127.0.0.1:*` as `Origin`. Set
   `AGENTREADY_MCP_ALLOWED_HOSTS` and `AGENTREADY_MCP_ALLOWED_ORIGINS` (comma separated) to replace those lists when you

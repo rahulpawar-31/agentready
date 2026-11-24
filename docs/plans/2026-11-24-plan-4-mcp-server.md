@@ -514,3 +514,9 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
   Tests: `tests/test_mcp_rest_parity.py` (status, `Allow`, `Location` and body for the REST error paths, hard-coded from
   the pre-MCP application), `tests/test_mcp_http.py` (two starts, 503, `/mcp/` redirect, a real client against
   `main.app` with its own lifespan).
+- **Group B (what reaches the agent).** The plan clipped only `evidence` (500) and `diff` (8,000 characters) and
+  labelled only those two. Now every string is clipped to 300 UTF-8 bytes (a diff to 8,000 bytes), the whole result is
+  capped at 60,000 bytes (`result_truncated`), the notice names every string field including `url`, `sha256` is left out
+  of the MCP fix summaries, `REPORT_ID` uses `fullmatch`, and an evicted report is `not_found`
+  (`get_report` reads under the store lock). The docs no longer imply the content is hidden: a new file's diff is the
+  file.

@@ -150,9 +150,11 @@ def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(
 
 @app.get("/report/{rid}")
 def get_report(rid: str):
-    if rid not in _reports:
+    with _fix_lock:                                      # eviction (in post_audit) happens under the same lock
+        report = _reports.get(rid)
+    if report is None:
         raise HTTPException(404, "Unknown report")
-    return asdict(_reports[rid])
+    return asdict(report)
 
 
 # --- Fixes (Plan 3). Nothing here makes a request to the site or writes to it. ---------------------------------
