@@ -2,7 +2,9 @@
 name = "agentready"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115", "uvicorn>=0.30", "httpx>=0.27", "beautifulsoup4>=4.12", "dnspython>=2.6", "mcp>=2.3,<3"]
+# mcp: the 2.x SDK renamed FastMCP to MCPServer and app/mcp_server.py uses an SDK internal (`session_manager`, which
+# exists only after `streamable_http_app()` runs), so the range is limited to the versions that were tested.
+dependencies = ["fastapi>=0.115", "uvicorn>=0.30", "httpx>=0.27", "beautifulsoup4>=4.12", "dnspython>=2.6", "mcp>=2.3,<2.5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

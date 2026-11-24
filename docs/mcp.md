@@ -73,10 +73,25 @@ was proposed.
   Clipping bounds the size; it cannot stop a short injection from fitting in 300 bytes. This reduces, but cannot
   remove, the risk that a hostile site tries to instruct an agent through the data it reports: an agent client should
   still treat these fields as data.
-- **Host and origin checks (DNS-rebinding protection) are on.** By default only `localhost:*`, `127.0.0.1:*` and
-  `[::1]:*` are accepted as `Host`, and `http://localhost:*` and `http://127.0.0.1:*` as `Origin`. Set
-  `AGENTREADY_MCP_ALLOWED_HOSTS` and `AGENTREADY_MCP_ALLOWED_ORIGINS` (comma separated) to replace those lists when you
-  serve the app under another name. Request bodies are limited to 64 KB.
+- **Host and origin checks (DNS-rebinding protection) are on, and exact.** AgentReady checks the `Host` header (exactly
+  one is required) and, when one is sent, the `Origin` header **before** the SDK's own check, and the SDK's check stays
+  on as well. The SDK matches by prefix (`localhost:8000@evil.test` would pass it); ours matches the whole value. By
+  default `Host` must be `localhost`, `127.0.0.1` or `[::1]` followed by `:` and a numeric port (1 to 65535), and an
+  `Origin`, if sent, must be `http://` plus one of those names and a numeric port. Uppercase names, a missing port,
+  `Origin: null`, paths, and user information are refused (421 for `Host`, 403 for `Origin`). To serve the app under
+  another name set `AGENTREADY_MCP_ALLOWED_HOSTS` and `AGENTREADY_MCP_ALLOWED_ORIGINS` (comma separated; they
+  **replace** the defaults). An entry ending in `:*` means exactly that name plus any numeric port; any other entry
+  must match the whole header exactly. A deployment on port 80 or 443 sends `Host: name` with no port, so list the bare
+  name (`AGENTREADY_MCP_ALLOWED_HOSTS=agentready.example.com`) and, if a browser client is used, the origin
+  (`AGENTREADY_MCP_ALLOWED_ORIGINS=https://agentready.example.com`). Request bodies are limited to 64 KB.
+- **Bound to localhost by default.** `uvicorn app.main:app --port 8000` listens on 127.0.0.1 only (a test checks
+  uvicorn's default). The run command above keeps that; passing `--host 0.0.0.0` is a choice to expose the endpoint,
+  and then the Host/Origin lists and your own authentication in front of it are what protect it.
+- **Logs do not carry audit data.** Building the server leaves the root logger exactly as it was (the SDK would
+  otherwise switch it to INFO and add a handler), and the `mcp`, `httpx` and `httpcore` loggers are held at WARNING, so
+  the ownership token in a refused audit's error and the request paths a site chooses (a redirect `Location`) are not
+  written to INFO logs, even if you turn INFO on for your own loggers. Our own warning on an unexpected failure logs only
+  the exception class name. WARNING and above from those libraries are still logged.
 - **Same trust level as `POST /audit`.** There are no accounts in the MVP. Anyone who can reach the endpoint can ask for
   an audit of a site whose control has been proven (the ownership token is public by design: it is only useful to
   someone who can edit the site). Keep the server on localhost, or put your own authentication in front of it.
@@ -105,6 +120,10 @@ was proposed.
 - One process: the MCP endpoint and the REST API share their stores because they run together. Running the MCP server as a
   separate process (for example over stdio) would give it an empty store, so it is not offered.
 - The MCP tools return the same data as the REST API, clipped. They do not stream progress.
+- Deferred, by decision: a cap on the number of snapshot directories; a global rate limit across all hosts beyond the
+  per-host throttle and the four-audit limit (and nothing is shared between processes: the limits are per process); the
+  SDK's INFO traceback for a client's own bad prompt name (the server has no prompts, and the line is at INFO, which
+  is off).
 - Each new `snapshot` name creates its own on-disk cache directory, and there is no limit on how many (a cap is
   deferred). Re-auditing the **same** snapshot returns the cached pages, not a fresh look at the site: after the owner
   deploys a fix, audit again with a **new** snapshot name (for example `after`), otherwise the report describes the old

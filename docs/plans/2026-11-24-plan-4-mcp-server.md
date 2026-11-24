@@ -526,3 +526,10 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
   A per-host throttle in the MCP adapter (one in flight, 5 seconds between starts, 1,000 hosts remembered, injectable
   clock) runs before the verification probe and returns `rate_limited`. The tool description now says the probe goes
   to the requested host. The transport is stateless (no sessions). Tests: `tests/test_mcp_abuse.py`, `tests/test_mcp_http.py`.
+- **Group D (logging and transport).** The SDK's `basicConfig` switched the root logger to INFO and added a handler,
+  which logged the ownership token (our refusal JSON) and the paths a site chooses (httpx request lines). Now the root
+  logger is restored after the server is built and the `mcp`, `httpx` and `httpcore` loggers are held at WARNING
+  (tests run in a fresh interpreter, because under pytest the root already has handlers). Host and Origin are matched
+  exactly by a check in front of the SDK's (default origins now include `[::1]`; `:*` means a numeric port; an entry
+  without a port matches the bare name), the dependency is pinned `mcp>=2.3,<2.5`, and the docs state the bind
+  address, the 80/443 case and the `/mcp/` redirect. Tests: `tests/test_mcp_logging.py`, `tests/test_mcp_http.py`.

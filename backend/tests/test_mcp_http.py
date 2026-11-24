@@ -4,6 +4,7 @@ choose the allowed hosts."""
 import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -90,7 +91,7 @@ def test_environment_variables_replace_the_defaults(monkeypatch):
     with TestClient(fresh_app(), base_url="http://localhost:8000") as c:          # replaced, not extended
         assert c.post("/mcp", headers=HEADERS, json=INIT).status_code == 421
     assert DEFAULT_ALLOWED_HOSTS == ["localhost:*", "127.0.0.1:*", "[::1]:*"]
-    assert DEFAULT_ALLOWED_ORIGINS == ["http://localhost:*", "http://127.0.0.1:*"]
+    assert DEFAULT_ALLOWED_ORIGINS == ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"]
 
 
 def padded_init(size):
@@ -165,3 +166,99 @@ def test_the_server_is_stateless_so_anonymous_initialises_cannot_pile_up_session
         assert r.status_code == 200 and "mcp-session-id" not in {k.lower() for k in r.headers}
         listed = c.post("/mcp", headers=HEADERS, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         assert listed.status_code == 200 and "audit_site" in listed.text
+
+
+# --- exact Host and Origin matching (review finding M2) and the other transport findings (M8, M10, M11) -----------
+def post(c, host=None, origin=None):
+    headers = dict(HEADERS)
+    if host is not None:
+        headers["Host"] = host
+    if origin is not None:
+        headers["Origin"] = origin
+    return c.post("/mcp", headers=headers, json=INIT).status_code
+
+
+@pytest.mark.parametrize("host", ["localhost:8000", "127.0.0.1:8000", "[::1]:8000", "localhost:1", "localhost:65535"])
+def test_the_default_hosts_are_accepted(host):
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        assert post(c, host=host) == 200
+
+
+@pytest.mark.parametrize("host", [
+    "localhost:8000@evil.test", "localhost:8000.evil.test", "localhost:evil.test", "localhost", "LOCALHOST:8000",
+    "localhost.evil.test:8000", "evil.test", "localhost:", "localhost:8000:9", "localhost:123456", "127.0.0.1",
+    "localhost:8000 evil.test", "[::1]", "localhost:80a"])
+def test_host_confusions_are_refused(host):
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        assert post(c, host=host) == 421
+
+
+@pytest.mark.parametrize("origin", ["http://localhost:3000", "http://127.0.0.1:5173", "http://[::1]:3000"])
+def test_the_default_origins_are_accepted(origin):
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        assert post(c, origin=origin) == 200
+
+
+@pytest.mark.parametrize("origin", [
+    "http://localhost:3000@evil.test", "http://localhost:3000.evil.test", "null", "http://localhost", "https://localhost:3000",
+    "http://LOCALHOST:3000", "http://evil.test", "http://localhost:3000/", "http://localhost:3000/x", "", "localhost:3000"])
+def test_origin_confusions_are_refused(origin):
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        assert post(c, origin=origin) in (403, 421)
+
+
+def test_the_origin_environment_variable_replaces_the_default_origins(monkeypatch):
+    monkeypatch.setenv("AGENTREADY_MCP_ALLOWED_ORIGINS", "https://agentready.example.com, http://localhost:*")
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        assert post(c, origin="https://agentready.example.com") == 200
+        assert post(c, origin="https://agentready.example.com.evil.test") == 403
+        assert post(c, origin="http://localhost:3000") == 200
+        assert post(c, origin="http://127.0.0.1:3000") == 403                      # replaced, not extended
+
+
+def test_the_origin_argument_replaces_the_default_origins():
+    with TestClient(fresh_app(allowed_origins=["https://ui.internal"]), base_url="http://localhost:8000") as c:
+        assert post(c, origin="https://ui.internal") == 200
+        assert post(c, origin="http://localhost:3000") == 403
+
+
+def test_a_host_entry_without_a_port_matches_exactly_that_host_header():
+    """Deployments on ports 80 or 443 send `Host: name` with no port, so they list the bare name."""
+    app = fresh_app(allowed_hosts=["agentready.example.com"])
+    with TestClient(app, base_url="http://agentready.example.com") as c:
+        assert post(c, host="agentready.example.com") == 200
+        assert post(c, host="agentready.example.com:8000") == 421
+        assert post(c, host="agentready.example.com.evil.test") == 421
+
+
+def test_a_wildcard_port_entry_means_any_numeric_port_on_exactly_that_name():
+    app = fresh_app(allowed_hosts=["agentready.internal:*"])
+    with TestClient(app, base_url="http://agentready.internal:8000") as c:
+        assert post(c, host="agentready.internal:9") == 200
+        assert post(c, host="agentready.internal:8000@evil.test") == 421
+        assert post(c, host="agentready.internal") == 421
+
+
+def test_two_host_headers_are_refused():
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        r = c.post("/mcp", headers=[("Host", "localhost:8000"), ("Host", "evil.test"), *HEADERS.items()], json=INIT)
+        assert r.status_code in (400, 421)
+
+
+def test_the_default_lists_cover_the_ipv6_loopback_for_origins_too():
+    assert DEFAULT_ALLOWED_HOSTS == ["localhost:*", "127.0.0.1:*", "[::1]:*"]
+    assert DEFAULT_ALLOWED_ORIGINS == ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"]
+
+
+def test_the_documented_run_command_binds_to_localhost_only():
+    import uvicorn
+    assert uvicorn.Config("app.main:app").host == "127.0.0.1"
+    docs = (Path(__file__).resolve().parents[2] / "docs" / "mcp.md").read_text()
+    commands = [line for line in docs.splitlines() if "uvicorn app.main:app" in line and line.startswith("    ")]
+    assert commands, "docs/mcp.md must show the run command"
+    assert all("--host" not in line for line in commands), commands          # the documented command keeps the default
+
+
+def test_the_sdk_dependency_is_pinned_to_the_versions_that_were_tested():
+    text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    assert '"mcp>=2.3,<2.5"' in text

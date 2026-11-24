@@ -23,7 +23,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
 from .audit import parse_url
@@ -46,7 +46,7 @@ GENERIC_FAILURE = "The request failed."
 MCP_PATH = "/mcp"
 MAX_REQUEST_BYTES = 65536
 DEFAULT_ALLOWED_HOSTS = ["localhost:*", "127.0.0.1:*", "[::1]:*"]
-DEFAULT_ALLOWED_ORIGINS = ["http://localhost:*", "http://127.0.0.1:*"]
+DEFAULT_ALLOWED_ORIGINS = ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"]
 
 INSTRUCTIONS = (
     "AgentReady audits whether an AI agent can find and use a website. Auditing a site needs proof of control: the "
@@ -275,11 +275,36 @@ def _throttle_key(url: str) -> str | None:
         return None
 
 
+@contextlib.contextmanager
+def _root_logging_untouched():
+    """The SDK calls `logging.basicConfig(level=INFO)` when a server is built, which turns the root logger to INFO and
+    adds a handler: every httpx request line (with paths the site chose) and the SDK's failed-tool lines (with our
+    error JSON, which carries the ownership token) would then be logged. Put the root logger back as it was."""
+    root = logging.getLogger()
+    level, handlers = root.level, list(root.handlers)
+    try:
+        yield
+    finally:
+        for handler in list(root.handlers):
+            if handler not in handlers:
+                root.removeHandler(handler)
+        for handler in handlers:
+            if handler not in root.handlers:
+                root.addHandler(handler)
+        root.setLevel(level)
+
+
 def build_server(core, *, clock=time.monotonic, host_interval: float = DEFAULT_HOST_INTERVAL,
                  audit_slots: int = AUDIT_SLOTS, audit_wait: float = AUDIT_WAIT_SECONDS) -> MCPServer:
     """Build the server. `core` is the `app.main` module; its attributes are looked up when a tool runs. The other
     arguments exist so tests can use a fake clock and short waits; the defaults are the documented limits."""
-    server = MCPServer("agentready", instructions=INSTRUCTIONS)
+    with _root_logging_untouched():
+        server = MCPServer("agentready", instructions=INSTRUCTIONS, log_level="WARNING")
+    # Even if the operator turns INFO on for the root logger, the SDK's own INFO lines (a failed tool call is logged
+    # with our error JSON, which carries the ownership token) and httpx's request lines (the path of a redirect is
+    # chosen by the audited site) stay off. WARNING and above are still logged.
+    for noisy in ("mcp", "httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     gate = AuditGate(clock, host_interval, audit_slots, audit_wait)
 
     @server.tool(name="audit_site", description=AUDIT_DESCRIPTION,
@@ -376,13 +401,63 @@ def make_mcp_app(server: MCPServer, allowed_hosts: list | None = None, allowed_o
                                       transport_security=security, stateless_http=True)
 
 
+class _Allowed:
+    """Exact matching for Host and Origin values. An entry ending in `:*` means that exact text followed by a numeric
+    port (1 to 5 digits, at most 65535); any other entry must match the whole value exactly. The SDK's own check
+    matches by prefix (`localhost:8000@evil.test` passes it), so this runs in front of it."""
+
+    def __init__(self, entries: list):
+        self._exact: set[str] = set()
+        self._with_port: list[re.Pattern] = []
+        for raw in entries:
+            entry = raw.strip()
+            if not entry:
+                continue
+            if entry.endswith(":*"):
+                self._with_port.append(re.compile(re.escape(entry[:-2]) + r":([0-9]{1,5})"))
+            else:
+                self._exact.add(entry)
+
+    def __contains__(self, value: str) -> bool:
+        if value in self._exact:
+            return True
+        for pattern in self._with_port:
+            match = pattern.fullmatch(value)
+            if match and int(match.group(1)) <= 65535:
+                return True
+        return False
+
+
 class McpRuntime:
-    """What a running lifespan keeps on `app.state.mcp_runtime`: the SDK app for this run."""
+    """What a running lifespan keeps on `app.state.mcp_runtime`: the SDK app for this run and the exact Host and
+    Origin rules."""
 
     def __init__(self, asgi_app, hosts: list, origins: list):
         self.app = asgi_app
         self.hosts = hosts
         self.origins = origins
+        self._hosts = _Allowed(hosts)
+        self._origins = _Allowed(origins)
+
+    def check(self, scope) -> tuple[int, str] | None:
+        """None when the request may proceed, else (status, text). A missing or repeated Host header, a Host not in
+        the allowed list, and an Origin (if sent) not in the allowed list are all refused."""
+        headers = scope.get("headers") or []
+        hosts = [v for k, v in headers if k == b"host"]
+        if len(hosts) != 1 or not _ascii(hosts[0]) or hosts[0].decode("ascii") not in self._hosts:
+            return 421, "Invalid Host header"
+        origins = [v for k, v in headers if k == b"origin"]
+        if len(origins) > 1 or (origins and (not _ascii(origins[0]) or origins[0].decode("ascii") not in self._origins)):
+            return 403, "Invalid Origin header"
+        return None
+
+
+def _ascii(raw: bytes) -> bool:
+    try:
+        raw.decode("ascii")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def mcp_lifespan(core, *, allowed_hosts: list | None = None, allowed_origins: list | None = None):
@@ -412,6 +487,10 @@ class McpGateway:
             response = JSONResponse({"detail": "The MCP endpoint is not running (the application's lifespan has not "
                                                "started)."}, status_code=503)
             await response(scope, receive, send)
+            return
+        refusal = runtime.check(scope)
+        if refusal is not None:
+            await PlainTextResponse(refusal[1], status_code=refusal[0])(scope, receive, send)
             return
         await runtime.app(scope, receive, send)
 
