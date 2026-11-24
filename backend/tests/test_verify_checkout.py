@@ -207,3 +207,13 @@ def test_the_script_never_touches_the_working_repository(vc):
     text = SCRIPT.read_text()
     assert "tempfile.mkdtemp" in text and "shutil.rmtree" in text
     assert "--keep" in text
+
+
+def test_cmd_step_reports_a_chosen_detail_on_success_and_the_output_tail_on_failure(vc):
+    import sys
+    ok = vc.cmd_step([sys.executable, "-c", "print('first'); print('[notice] pip upgrade')"], ok_detail="installed")
+    assert (ok.status, ok.detail) == ("PASS", "installed")
+    last = vc.cmd_step([sys.executable, "-c", "print('first'); print('last line')"])
+    assert last.status == "PASS" and last.detail == "last line"
+    bad = vc.cmd_step([sys.executable, "-c", "import sys; print('boom detail'); sys.exit(3)"], ok_detail="never shown")
+    assert bad.status == "FAIL" and "boom detail" in bad.detail and "never shown" not in bad.detail

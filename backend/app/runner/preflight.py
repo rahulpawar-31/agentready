@@ -311,13 +311,13 @@ def to_text(result: Preflight) -> str:
     return "\n".join(lines)
 
 
-def default_deps() -> Deps:
+def default_deps(repo_root=REPO_ROOT) -> Deps:
     def verify(ref: SiteRef) -> bool:
         from . import cli                       # imports app.main, which needs AGENTREADY_SECRET
         return cli.default_deps().verify(ref)
 
-    return Deps(committed=git_problems, sdk_installed=lambda: importlib.util.find_spec("anthropic") is not None,
-                verify=verify)
+    return Deps(committed=lambda paths: git_problems(paths, repo_root),
+                sdk_installed=lambda: importlib.util.find_spec("anthropic") is not None, verify=verify)
 
 
 def main(argv=None, deps: Deps | None = None, env=None, out=print, repo_root=REPO_ROOT) -> int:
@@ -334,7 +334,7 @@ def main(argv=None, deps: Deps | None = None, env=None, out=print, repo_root=REP
         parser.error("snapshot names must match [A-Za-z0-9_-]{1,64}")
     if args.snapshot_before.casefold() == args.snapshot_after.casefold():
         parser.error("--snapshot-before and --snapshot-after must differ")
-    result = run_preflight(repo_root, os.environ if env is None else env, deps or default_deps(),
+    result = run_preflight(repo_root, os.environ if env is None else env, deps or default_deps(repo_root),
                            check_control=args.check_control, before=args.snapshot_before, after=args.snapshot_after,
                            allow_existing=args.allow_existing)
     out(json.dumps(to_dict(result), indent=2) if args.format == "json" else to_text(result))

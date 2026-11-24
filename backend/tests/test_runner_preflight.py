@@ -317,3 +317,39 @@ def test_the_default_dependencies_are_wired_to_the_real_helpers():
     d = pf.default_deps()
     assert isinstance(d.sdk_installed(), bool)
     assert d.committed([REPO / "benchmark" / "criteria.json"]) is not None
+
+
+def _git(root, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def test_the_committed_check_uses_the_repository_given_not_this_one(tmp_path):
+    """default_deps(repo_root) must check files against the git repository at repo_root."""
+    root = tmp_path / "other"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "t@example.org")
+    _git(root, "config", "user.name", "t")
+    (root / "f.json").write_text("{}")
+    _git(root, "add", "f.json")
+    _git(root, "commit", "-q", "-m", "x")
+    deps = pf.default_deps(root)
+    assert deps.committed([root / "f.json"]) == []
+    (root / "f.json").write_text('{"changed": true}')
+    assert any("uncommitted changes" in p for p in deps.committed([root / "f.json"]))
+    (root / "new.json").write_text("{}")
+    assert any("not committed" in p for p in deps.committed([root / "new.json"]))
+
+
+def test_main_builds_its_default_dependencies_for_the_repository_it_was_given(tmp_path, monkeypatch):
+    seen = {}
+    real = pf.default_deps
+
+    def spy(repo_root=pf.REPO_ROOT):
+        seen["root"] = repo_root
+        return real(repo_root)
+    monkeypatch.setattr(pf, "default_deps", spy)
+    root = make_repo(tmp_path)
+    pf.main([], env={}, out=lambda s: None, repo_root=root)
+    assert seen["root"] == root

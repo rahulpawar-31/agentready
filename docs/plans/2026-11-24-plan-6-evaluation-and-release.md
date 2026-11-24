@@ -152,3 +152,25 @@ Rules (`load_sites(path) -> (list[Site], list[str])` returns problems instead of
 1. Reports are written outside `benchmark/results/` (refused inside it).
 2. `after_eligible` for `permission` sites needs a note that mentions permission to change or deploy.
 3. The README's Results section stays "Not yet measured" until the owner runs the benchmark.
+
+---
+
+## Corrections found while building (plan bugs and defects in the merged PR #6 code)
+
+Plan bugs fixed in the build:
+1. **`git_head` inside one snapshot.** The plan made more than one value a data issue for criteria, harness, model *and* commit. The commit moves whenever a site label is committed between runs, so a different `git_head` is listed in the provenance section but is not a data issue. The harness hash is what must stay fixed.
+2. **No tracked results in a clean checkout.** The plan's clean-checkout script would have flagged tracked `benchmark/results/*` files. The benchmark docs tell the owner to commit results for publication, so the script flags only leftover temp files there.
+3. **Banned phrase "guarantee".** Too broad: `docs/fixes.md` correctly says "not a guarantee". The honesty test bans the claim forms ("we guarantee", "guaranteed to") instead.
+4. **Pre-flight and `repo_root`.** The plan did not say which repository the "committed" check reads. `main(repo_root=...)` built its default dependencies against this repository's root; the real run against a scratch repository exposed it. `default_deps(repo_root)` now binds the check to the repository given.
+5. **A junk assertion** (`... or True`) in my own first draft of the A1 test was replaced with a real check.
+
+Defects found in the merged PR #6 `report.py` (it shipped with no tests):
+1. `--output` could be written anywhere inside `benchmark/results/` except over an existing run file. A report saved there is read back as a result on the next run (and appears as a data issue).
+2. `--output` followed a symlink and could overwrite the file it pointed to.
+3. `--before` and `--after` differing only by case were accepted (the same directory on a case-insensitive file system).
+4. Text from result files (`reason`, `error`) was printed raw into Markdown: a newline, `|` or `##` in a reason could add table rows, headings or links, and a long string made unbounded lines.
+5. A run file copied between snapshots, or whose recorded task did not match its file name, was pooled silently.
+6. No provenance (criteria, harness, model, commit) was shown, and mixed criteria, harness or model inside one snapshot was not detected.
+7. No pair transitions (fail to pass, pass to fail, ...), so a net change hid its components.
+8. No small-sample note, no explicit MCP-stub statement, and an empty results tree printed empty tables with no message.
+9. README and `docs/benchmark-report.md` told readers to write the report to `benchmark/results/evaluation.json` (which the hardened command now refuses).

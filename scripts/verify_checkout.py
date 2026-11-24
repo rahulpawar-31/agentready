@@ -258,9 +258,12 @@ def run_cmd(cmd, cwd=None, env=None, timeout=1200) -> tuple[int, str]:
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
-def cmd_step(cmd, **kw) -> StepResult:
+def cmd_step(cmd, ok_detail: str | None = None, **kw) -> StepResult:
+    """Run a command: PASS with `ok_detail` (or the last output line), FAIL with the tail of its output."""
     rc, output = run_cmd(cmd, **kw)
-    return StepResult("PASS" if rc == 0 else "FAIL", tail(output, lines=1 if rc == 0 else 25, chars=400 if rc else 160))
+    if rc == 0:
+        return StepResult("PASS", ok_detail if ok_detail is not None else tail(output, lines=1, chars=160))
+    return StepResult("FAIL", tail(output, lines=25, chars=400))
 
 
 def build_steps(args, tmp: Path, git, out=print) -> list[Step]:
@@ -290,7 +293,8 @@ def build_steps(args, tmp: Path, git, out=print) -> list[Step]:
         rc, output = run_cmd([sys.executable, "-m", "venv", str(venv)])
         if rc != 0:
             return StepResult("FAIL", tail(output, 10, 400))
-        return cmd_step([str(py), "-m", "pip", "install", "-q", "-e", f"{backend}[dev,runner]"], timeout=1800)
+        return cmd_step([str(py), "-m", "pip", "install", "-q", "-e", f"{backend}[dev,runner]"],
+                        ok_detail="installed backend[dev,runner] into a new virtual environment", timeout=1800)
 
     def tests():
         env = {k: v for k, v in os.environ.items() if k not in ("AGENTREADY_LIVE", "ANTHROPIC_API_KEY", "AGENTREADY_SECRET")}
