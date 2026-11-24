@@ -36,7 +36,7 @@ message; exception text is never sent to the client).
 There is **no tool to approve, reject or export a fix**, on purpose. Approval is the site owner's decision, made in
 the web interface or the REST API (`POST /report/{id}/fixes/{fix}/approve`, then `GET .../export`). An agent that
 could approve its own proposals would remove the human step that FR-6.3 exists for. A test pins the tool list to the
-three names above, and no response contains a `content` field.
+three names above, and no tool result contains a `content` key in its JSON (the fix file itself is only available through the REST export).
 
 Note that a new file's diff shows the whole file, because the owner needs to review it. The diff is the review
 material; the gated step is the export (download or copy), and that is not available through MCP at all.
