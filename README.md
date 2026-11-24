@@ -74,8 +74,19 @@ After recording the before and after snapshots, generate the evaluation report:
 
 Use `--format json --output ../benchmark/results/evaluation.json` to save machine-readable output.
 The report lists sample sizes, failures, invalid runs, repeat spread and a paired before/after change.
-Audit-check agreement and false-positive rates remain unmeasured until hand-labelled audit outcomes
-and matching audit findings are recorded; see [`docs/benchmark-report.md`](docs/benchmark-report.md).
+
+### Measuring audit-check accuracy (Plan 7)
+
+Before any audit run, independently inspect each site and add all 13 expected pass/fail outcomes to its
+committed label under `audit_checks` (schema and meaning in [`benchmark/labels/README.md`](benchmark/labels/README.md)).
+Then record the before and after audit snapshots with proof of control:
+
+    cd backend && python -m app.runner.audit_cli --label ../benchmark/labels/<site>.json --snapshot before
+    cd backend && python -m app.runner.audit_cli --label ../benchmark/labels/<site>.json --snapshot after
+
+The report calculates per-check agreement and false-positive rates from those saved findings. A
+predicted check failure is the positive class; unreachable checks are excluded. Results are limited to
+the sites with committed labels and audit snapshots. See [`docs/benchmark-report.md`](docs/benchmark-report.md).
 
 ### Known limitations
 

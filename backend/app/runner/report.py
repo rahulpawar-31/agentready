@@ -3,12 +3,13 @@
 Run from ``backend`` with ``python -m app.runner.report --before before --after after``.
 """
 import argparse
+import hashlib
 import json
 import re
 from collections import defaultdict
 from pathlib import Path
 
-from .labels import load_label
+from .labels import AUDIT_CHECK_IDS, load_label
 from .results import load_invalid_runs, load_runs
 from .tasks import TASK_IDS
 
@@ -25,10 +26,12 @@ def _labels(root: Path) -> tuple[dict[str, dict], list[str]]:
             continue
         try:
             label = load_label(path, check_name=True)
+            label_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         except (OSError, ValueError) as exc:
             problems.append(f"label {path.name}: {exc}")
             continue
-        labels[label.host] = {"site": label.site, "host": label.host}
+        labels[label.host] = {"site": label.site, "host": label.host, "audit_checks": label.audit_checks,
+                             "label_sha256": label_sha256}
     return labels, problems
 
 
@@ -57,6 +60,9 @@ def _load_snapshot(root: Path, snapshot: str, labels: dict[str, dict], repeats: 
             return
         if not isinstance(result, dict) or not isinstance(config, dict):
             problems.append(f"{snapshot}/{rel}: missing result or configuration")
+            return
+        if config.get("label_sha256") != labels[site]["label_sha256"]:
+            problems.append(f"{snapshot}/{rel}: site label changed after this task run was recorded")
             return
         key = (site, task, repeat)
         if invalid_file or result.get("valid") is not True:
@@ -152,10 +158,121 @@ def _paired(before: dict, after: dict) -> dict:
     }
 
 
+def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> tuple[dict, list[str]]:
+    """Load one owner-verified audit report per labelled host for an immutable snapshot."""
+    base = root / "audits" / snapshot
+    problems: list[str] = []
+    reports: dict[str, dict] = {}
+    if base.exists():
+        for path in sorted(base.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                problems.append(f"audits/{snapshot}/{path.name} is not readable")
+                continue
+            if not isinstance(row, dict):
+                problems.append(f"audits/{snapshot}/{path.name} must contain an object")
+                continue
+            site = row.get("site")
+            if not isinstance(site, str) or site not in labels:
+                problems.append(f"audits/{snapshot}/{path.name}: site has no committed site label")
+                continue
+            expected_name = re.sub(r"[^a-z0-9._-]", "_", site.lower()) + ".json"
+            if path.name != expected_name:
+                problems.append(f"audits/{snapshot}/{path.name}: filename does not match the labelled host")
+                continue
+            if row.get("snapshot") != snapshot:
+                problems.append(f"audits/{snapshot}/{path.name}: snapshot does not match its directory")
+                continue
+            if row.get("origin") != labels[site]["site"]:
+                problems.append(f"audits/{snapshot}/{path.name}: origin does not match the labelled site")
+                continue
+            if row.get("label_sha256") != labels[site]["label_sha256"]:
+                problems.append(f"audits/{snapshot}/{path.name}: site label changed after this audit was recorded")
+                continue
+            if site in reports:
+                problems.append(f"audits/{snapshot}/{path.name}: duplicate audit report for {site}")
+                continue
+            findings = row.get("findings")
+            if not isinstance(findings, list):
+                problems.append(f"audits/{snapshot}/{path.name}: findings must be a list")
+                continue
+            by_check = {}
+            malformed = False
+            for finding in findings:
+                if not isinstance(finding, dict):
+                    malformed = True
+                    break
+                check_id, passed, status = finding.get("check_id"), finding.get("passed"), finding.get("status")
+                if check_id not in AUDIT_CHECK_IDS or not isinstance(passed, bool) or status not in (
+                    "detected", "not detected", "unreachable"
+                ):
+                    malformed = True
+                    break
+                if check_id in by_check:
+                    problems.append(f"audits/{snapshot}/{path.name}: duplicate finding for {check_id}")
+                    malformed = True
+                    break
+                by_check[check_id] = {"passed": passed, "status": status}
+            if malformed:
+                problems.append(f"audits/{snapshot}/{path.name}: malformed findings")
+                continue
+            reports[site] = by_check
+
+    checks = {}
+    for check_id in AUDIT_CHECK_IDS:
+        counts = {"true_positive": 0, "false_positive": 0, "true_negative": 0, "false_negative": 0,
+                  "unreachable": 0, "missing": 0}
+        for site, label in labels.items():
+            expected_checks = label["audit_checks"]
+            if expected_checks is None:
+                continue
+            observed = reports.get(site, {}).get(check_id)
+            if observed is None:
+                counts["missing"] += 1
+                continue
+            if observed["status"] == "unreachable":
+                counts["unreachable"] += 1
+                continue
+            # A failed readiness check is the positive class for the false-positive rate.
+            actual_issue, predicted_issue = not expected_checks[check_id], not observed["passed"]
+            if predicted_issue and actual_issue:
+                counts["true_positive"] += 1
+            elif predicted_issue:
+                counts["false_positive"] += 1
+            elif actual_issue:
+                counts["false_negative"] += 1
+            else:
+                counts["true_negative"] += 1
+        support = sum(counts[k] for k in ("true_positive", "false_positive", "true_negative", "false_negative"))
+        negatives = counts["false_positive"] + counts["true_negative"]
+        checks[check_id] = {
+            **counts,
+            "support": support,
+            "agreement_pct": round(100 * (counts["true_positive"] + counts["true_negative"]) / support, 1)
+            if support else None,
+            "false_positive_rate_pct": round(100 * counts["false_positive"] / negatives, 1) if negatives else None,
+        }
+    labelled = sum(label["audit_checks"] is not None for label in labels.values())
+    measured = sum(item["support"] for item in checks.values())
+    missing_reports = sorted(site for site, label in labels.items()
+                             if label["audit_checks"] is not None and site not in reports)
+    return {
+        "snapshot": snapshot,
+        "status": "measured" if measured else "not measured",
+        "labelled_sites": labelled,
+        "sites_with_reports": sum(site in reports for site, label in labels.items() if label["audit_checks"] is not None),
+        "missing_reports": missing_reports,
+        "checks": checks,
+    }, problems
+
+
 def build_report(results: Path, labels_dir: Path, before_name: str, after_name: str, repeats: int = 3) -> dict:
     labels, label_problems = _labels(labels_dir)
     before, before_problems = _load_snapshot(results, before_name, labels, repeats)
     after, after_problems = _load_snapshot(results, after_name, labels, repeats)
+    before_audit, before_audit_problems = _load_audit_snapshot(results, before_name, labels)
+    after_audit, after_audit_problems = _load_audit_snapshot(results, after_name, labels)
     paired = _paired(before, after)
     for snapshot in (before, after):
         snapshot.pop("_valid_by_key", None)
@@ -166,16 +283,14 @@ def build_report(results: Path, labels_dir: Path, before_name: str, after_name: 
         "before": before,
         "after": after,
         "paired_comparison": paired,
-        "audit_check_accuracy": {
-            "status": "not measured",
-            "reason": "The current benchmark labels and task-run files do not contain hand-labelled audit-check outcomes and audit findings.",
-        },
-        "problems": label_problems + before_problems + after_problems,
+        "audit_check_accuracy": {"before": before_audit, "after": after_audit,
+                                  "positive_class": "audit check predicts a readiness issue (passed=false)"},
+        "problems": label_problems + before_problems + after_problems + before_audit_problems + after_audit_problems,
         "limitations": [
             "Task success describes only the labelled sites and recorded runs.",
             "Invalid model or harness runs are excluded from success-rate denominators and counted separately.",
             "Paired change includes only matching site, task and repeat records with matching runner configuration.",
-            "Audit-check accuracy is not calculated until labelled audit outcomes and corresponding audit findings are recorded.",
+            "Audit-check accuracy compares preregistered expected pass/fail labels with saved audit findings; unreachable checks are excluded.",
         ],
     }
 
@@ -211,8 +326,25 @@ def to_markdown(report: dict) -> str:
     change = "—" if pair["change_pp"] is None else f"{pair['change_pp']:+.1f} pp"
     lines += ["## Paired comparison", "",
               f"Same site/task/repeat runs: {pair['valid_paired_runs']}; before {before_pct}; after {after_pct}; change {change}.",
-              "", "## Audit check accuracy", "", report["audit_check_accuracy"]["status"],
-              "", report["audit_check_accuracy"]["reason"], "", "## Limitations", ""]
+              "", "## Audit check accuracy", ""]
+    accuracy = report["audit_check_accuracy"]
+    for key in ("before", "after"):
+        audit = accuracy[key]
+        lines += [f"### {key.title()} ({audit['snapshot']})", "",
+                  f"Status: {audit['status']}; labelled sites: {audit['labelled_sites']}; "
+                  f"sites with reports: {audit['sites_with_reports']}.", "",
+                  "Positive means the audit predicts a readiness issue (the check fails).", "",
+                  "| Check | Agreement | False-positive rate | TP | FP | TN | FN | Unreachable | Missing |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for check_id, item in audit["checks"].items():
+            agreement = "—" if item["agreement_pct"] is None else f"{item['agreement_pct']}%"
+            fpr = "—" if item["false_positive_rate_pct"] is None else f"{item['false_positive_rate_pct']}%"
+            lines.append(f"| {check_id} | {agreement} | {fpr} | {item['true_positive']} | {item['false_positive']} | "
+                         f"{item['true_negative']} | {item['false_negative']} | {item['unreachable']} | {item['missing']} |")
+        if audit["missing_reports"]:
+            lines += ["", "Missing audit reports: " + ", ".join(f"`{site}`" for site in audit["missing_reports"])]
+        lines.append("")
+    lines += ["## Limitations", ""]
     lines.extend(f"- {item}" for item in report["limitations"])
     if report["problems"]:
         lines += ["", "## Data issues", ""]
