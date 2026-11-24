@@ -56,7 +56,7 @@ export function makeDownloader(document, urlApi) {
   };
 }
 
-export async function start({ document, fetch: fetchImpl, storage = null, clipboard = null, downloadBlob, now = () => new Date() }) {
+export async function start({ document, fetch: fetchImpl, storage = null, clipboard = null, downloadBlob, now = () => new Date(), win = null }) {
   const { clear } = makeDom(document);
   const api = createApi(fetchImpl);
   const store = createStore(storage);
@@ -205,6 +205,26 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
     });
   }
 
+  // ---- printing: CSS cannot open a closed <details>, so open every finding row for the printout and put them back after
+  if (win && typeof win.addEventListener === "function") {
+    let opened = [];
+    const findings = (node, out = []) => {
+      for (const child of node.children ?? []) {
+        if (String(child.tagName).toLowerCase() === "details" && String(child.getAttribute("class") ?? "").split(/\s+/).includes("finding")) out.push(child);
+        findings(child, out);
+      }
+      return out;
+    };
+    win.addEventListener("beforeprint", () => {
+      opened = findings(el.report).filter((d) => !d.hasAttribute("open"));
+      for (const d of opened) d.setAttribute("open", "");
+    });
+    win.addEventListener("afterprint", () => {
+      for (const d of opened) d.removeAttribute("open");
+      opened = [];
+    });
+  }
+
   // ---- start up: show the form, and bring back a report from this browser tab if there is one
   showUrlForm();
   const saved = store.loadReportId();
@@ -229,6 +249,6 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   start({ document, fetch: (...args) => window.fetch(...args), storage: browserStorage(),
-    clipboard: (typeof navigator !== "undefined" && navigator.clipboard) || null, downloadBlob: makeDownloader(document, URL) })
+    clipboard: (typeof navigator !== "undefined" && navigator.clipboard) || null, downloadBlob: makeDownloader(document, URL), win: window })
     .catch(() => {});                            // the page is static HTML plus this script: a failure here must not become an unhandled error
 }

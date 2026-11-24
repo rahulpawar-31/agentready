@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allText, byTag, byText, createFakeDocument, serialize } from "./fake-dom.mjs";
+import { allText, byTag, byText, createFakeDocument, findAll, serialize } from "./fake-dom.mjs";
 import { makeDownloader, start } from "../../app/ui/app.js";
 
 const RID = "0123456789abcdef0123456789abcdef";
@@ -73,7 +73,7 @@ async function boot(opts = {}) {
   const clipboard = opts.clipboard === undefined ? { writeText: async (t) => { copied.push(t); } } : opts.clipboard;
   const storage = opts.storage === undefined ? memory() : opts.storage;
   const app = await start({ document: doc, fetch: srv.fetch, storage, clipboard,
-    downloadBlob: (blob, name) => downloads.push({ blob, name }), now: opts.now ?? (() => new Date(Date.UTC(2026, 10, 24, 9, 5, 7))) });
+    downloadBlob: (blob, name) => downloads.push({ blob, name }), win: opts.win ?? null, now: opts.now ?? (() => new Date(Date.UTC(2026, 10, 24, 9, 5, 7))) });
   return { doc, els, srv, app, downloads, copied, storage };
 }
 const status = (els) => els["status"].textContent;
@@ -354,4 +354,25 @@ test("an unexpected failure inside a click handler frees the busy lock and shows
   broken = false;
   await click(t, "step-report", "Propose fixes");                       // the busy lock was released
   assert.ok(shown(t.els, "step-fixes"));
+});
+
+// ---------------------------------------------------------------- Group B: printing
+test("printing opens every finding row, and closes again the ones that were closed", async () => {
+  const listeners = {};
+  const win = { addEventListener: (type, fn) => { listeners[type] = fn; } };
+  const t = await boot({ win });
+  await toReport(t);
+  const rows = findAll(t.els["step-report"], (n) => n.tagName === "details");
+  assert.ok(rows.length > 0);
+  rows[0].setAttribute("open", "");                         // one row the person had already opened
+  listeners.beforeprint();
+  assert.ok(rows.every((r) => r.hasAttribute("open")), "all rows are open for the printout");
+  listeners.afterprint();
+  assert.equal(rows[0].hasAttribute("open"), true, "the row the person opened stays open");
+  assert.ok(rows.slice(1).every((r) => !r.hasAttribute("open")), "the others are closed again");
+});
+
+test("a page without a window object still starts", async () => {
+  const t = await boot({ win: null });
+  assert.equal(byTag(t.els["step-url"], "input").length, 1);
 });

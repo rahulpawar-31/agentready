@@ -10,8 +10,7 @@ import { start } from "../../app/ui/app.js";
 const RID = "0123456789abcdef0123456789abcdef";
 const SECTIONS = ["step-url", "step-verify", "step-report", "step-fixes"];
 const CSS = fs.readFileSync(new URL("../../app/ui/app.css", import.meta.url), "utf8");
-const UNSTYLED_UNTIL_GROUP_B = ["chip-not-detected", "chip-confidence", "chip-proposed"];
-const CSS_CLASSES = new Set([...CSS.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]).concat(UNSTYLED_UNTIL_GROUP_B));
+const CSS_CLASSES = new Set([...CSS.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]));
 const STRINGS = ["<img src=x onerror=alert(1)>", "\"><script>alert(1)</script>", "javascript:alert(1)", "</pre><b>x</b>", "<!--", "]]>",
   "‮⁦abc", "a​b", "x\u0000y", "a\nb\rc d e", "diff-add chip chip-detected", "' onmouseover='x", "__proto__",
   "constructor", "toString", "hasOwnProperty", "valueOf", "x".repeat(20000), "", " ", "{{7*7}}", "${7*7}", "%s%n"];

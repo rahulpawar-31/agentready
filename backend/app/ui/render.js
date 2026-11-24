@@ -208,7 +208,7 @@ export function renderReport(document, report, handlers = {}) {
   function categoryTitle(name) { return own(CATEGORY_TITLES, name) ?? clipText(name, CLIP.name); }
 
   function categorySections() {
-    // One pass over at most MAX_FINDINGS findings: each goes straight into its category's group.
+    // One pass over at most MAX_FINDINGS findings: each goes straight into the group of its category.
     const groups = new Map();
     for (const f of findings.slice(0, MAX_FINDINGS)) {
       const name = String(f.category);
@@ -235,7 +235,9 @@ export function renderReport(document, report, handlers = {}) {
     return h("details", { class: "finding" },
       h("summary", {}, h("span", { class: "finding-title" }, title),
         h("span", { class: `chip ${STATUS_CLASS[status]}` }, status),
-        h("span", { class: "chip chip-confidence" }, `confidence: ${confidenceLabel(f.confidence)}`)),
+        h("span", { class: "chip chip-confidence" }, `confidence: ${confidenceLabel(f.confidence)}`),
+        // a visible cue that does not depend on the browser's own disclosure marker (flex layout can remove it)
+        h("span", { class: "finding-toggle" }, h("span", { class: "toggle-closed" }, "Show evidence"), h("span", { class: "toggle-open" }, "Hide evidence"))),
       h("div", { class: "finding-body" },
         h("p", {}, h("strong", {}, "What was checked: "), clipText(f.check, CLIP.check)),
         h("p", {}, h("strong", {}, "What was observed: "), clipText(f.evidence, CLIP.evidence)),

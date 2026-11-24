@@ -18,6 +18,7 @@
   --fg: #16181d;
   --muted: #565b66;
   --border: #d3d7de;
+  --border-strong: #767c88;
   --tint: #eceff4;
   --accent: #3446c4;
   --accent-text: #ffffff;
@@ -33,6 +34,7 @@
     --fg: #eceef2;
     --muted: #a3a9b5;
     --border: #353a45;
+    --border-strong: #707887;
     --tint: #252a33;
     --accent: #93a0ff;
     --accent-text: #10131a;
@@ -88,7 +90,7 @@ section.card, #step-url, #step-verify, #step-report, #step-fixes { margin: 0; }
 label { display: block; margin-bottom: var(--space-2); font-weight: 600; }
 input[type="text"] {
   width: 100%; min-height: 44px; padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
-  background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius);
   font: inherit;
 }
 
@@ -98,8 +100,8 @@ input[type="text"] {
   cursor: pointer; border: 1px solid var(--accent);
 }
 .btn-primary { background: var(--accent); color: var(--accent-text); }
-.btn-secondary { background: transparent; color: var(--fg); border-color: var(--border); font-weight: 400; }
-.btn[disabled] { cursor: not-allowed; opacity: 0.6; text-decoration: line-through; }
+.btn-secondary { background: transparent; color: var(--fg); border-color: var(--border-strong); font-weight: 400; }
+.btn[disabled] { cursor: not-allowed; opacity: 0.6; }
 
 .snippet {
   padding: var(--space-3); background: var(--tint); border-radius: var(--radius); overflow-x: auto;
@@ -111,7 +113,7 @@ input[type="text"] {
 .score-of { color: var(--muted); }
 .score-band { font-size: var(--text-h3); font-weight: 600; margin: 0 0 var(--space-2); }
 progress {
-  display: block; width: 100%; height: var(--space-2); border: 0; border-radius: var(--space-1);
+  display: block; width: 100%; height: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--space-1);
   appearance: none; -webkit-appearance: none; background: var(--tint); overflow: hidden;
 }
 progress::-webkit-progress-bar { background: var(--tint); }
@@ -125,14 +127,20 @@ progress::-moz-progress-bar { background: var(--accent); }
 .finding { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: var(--space-2); background: var(--surface); }
 .finding summary { cursor: pointer; padding: var(--space-2) var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .finding-title { font-weight: 600; margin-right: var(--space-2); }
+.finding-toggle { margin-left: auto; color: var(--muted); font-size: var(--text-sm); text-decoration: underline; }
+.finding[open] .toggle-closed { display: none; }
+.finding:not([open]) .toggle-open { display: none; }
 .finding-body { padding: var(--space-1) var(--space-3) var(--space-2); border-top: 1px solid var(--border); }
 .finding-body p { margin: var(--space-2) 0; }
 
 .chip {
-  display: inline-block; padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--space-4);
+  display: inline-block; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--space-4);
   font-size: var(--text-sm); line-height: 1.2; background: var(--tint);
 }
 .chip-detected, .chip-approved { border-color: var(--accent); background: var(--accent-tint); }
+.chip-not-detected { background: transparent; }
+.chip-confidence { background: transparent; color: var(--muted); }
+.chip-proposed { background: transparent; border-style: dotted; }
 .chip-unreachable, .chip-unknown { border-style: dashed; }
 .chip-rejected { text-decoration: line-through; }
 
@@ -152,4 +160,24 @@ progress::-moz-progress-bar { background: var(--accent); }
 
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto; transition: none; animation: none; }
+}
+
+@media (forced-colors: active) {
+  :focus-visible { outline: 3px solid Highlight; }
+  .btn { border: 1px solid ButtonText; }
+  .btn-primary { border-width: 3px; }
+  .chip { border-color: CanvasText; background: Canvas; }
+  .chip-detected, .chip-approved { border-width: 3px; }
+  progress { border: 1px solid CanvasText; background: Canvas; }
+  progress::-webkit-progress-bar { background: Canvas; }
+  progress::-webkit-progress-value { background: Highlight; }
+  progress::-moz-progress-bar { background: Highlight; }
+  .diff-add { border-left: 3px solid CanvasText; }
+  .diff-del { text-decoration: line-through; }
+}
+
+@media print {
+  .actions, .skip-link, .finding-toggle { display: none; }
+  .diff { max-height: none; overflow: visible; }
+  .diff-line { white-space: pre-wrap; }
 }

@@ -358,3 +358,19 @@ test("at most 20 fixes are drawn, with a marker for the rest", () => {
   assert.equal(findAll(node, (n) => n.tagName === "section" && cls(n).includes("fix-card")).length, 20);
   assert.ok(allText(node).includes("10 more fixes are not shown here"));
 });
+
+// ---------------------------------------------------------------- Group B: a visible way to open a finding
+test("every finding row carries visible 'Show evidence' and 'Hide evidence' text inside its summary", () => {
+  const node = renderReport(doc, report(), { onPropose: noop, onReaudit: noop });
+  const rows = findAll(node, (n) => n.tagName === "details" && cls(n).includes("finding"));
+  assert.ok(rows.length >= 2);
+  for (const row of rows) {
+    const [summary] = byTag(row, "summary");
+    const closed = findAll(summary, (n) => cls(n).includes("toggle-closed"));
+    const open = findAll(summary, (n) => cls(n).includes("toggle-open"));
+    assert.equal(closed.length, 1);
+    assert.equal(open.length, 1);
+    assert.equal(closed[0].textContent, "Show evidence");
+    assert.equal(open[0].textContent, "Hide evidence");
+  }
+});
