@@ -140,19 +140,35 @@ def test_an_llms_txt_that_could_not_be_checked_is_not_proposed_as_missing():
     assert FixKind.LLMS_TXT not in kinds(p)[0] and "could not" in kinds(p)[1][FixKind.LLMS_TXT]
 
 
-def test_proposals_are_deterministic_and_make_no_requests():
+def test_proposals_are_deterministic():
     a, f = run({"/": HOME})
-    n = len(f.calls)
     report = audit(O, f)
-    n_after_audit = len(f.calls)
     b = propose_fixes(report, capture_baseline(O, f))
     c = propose_fixes(report, capture_baseline(O, f))
     assert [(x.id, x.content, x.diff) for x in a.fixes] == [(x.id, x.content, x.diff) for x in b.fixes] == \
            [(x.id, x.content, x.diff) for x in c.fixes]
-    base = capture_baseline(O, f)
+    assert [(s.kind, s.reason) for s in a.skipped] == [(s.kind, s.reason) for s in b.skipped]
+
+
+def test_proposing_makes_no_request_and_writes_no_file(monkeypatch):
+    import builtins
+    import socket
+    f = FakeFetcher({f"{O}/": page(f"{O}/", HOME), f"{O}/openapi.json": page(
+        f"{O}/openapi.json", json.dumps({"openapi": "3.0.0", "paths": {"/a": {"get": {"summary": "A"}}}}))})
+    report = audit(O, f)
+    baseline = capture_baseline(O, f)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("propose_fixes touched the network or a file")
+
+    real_open = builtins.open
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(builtins, "open", lambda file, mode="r", *a, **k: forbidden() if any(x in mode for x in "wax+")
+                        else real_open(file, mode, *a, **k))
     calls = len(f.calls)
-    propose_fixes(report, base)
-    assert len(f.calls) == calls        # propose_fixes itself takes no fetcher and makes no request
+    p = propose_fixes(report, baseline)
+    assert [x.id for x in p.fixes] == ["llms_txt", "json_ld", "mcp_stub"] and len(f.calls) == calls
 
 
 # --- Group B: secrets are checked in the text a site supplies and in what is generated, not in page context
