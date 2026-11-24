@@ -1,0 +1,104 @@
+"""Run and save a preregistered deterministic audit for the check-accuracy benchmark.
+
+Run from ``backend`` with ``python -m app.runner.audit_cli --label ../benchmark/labels/example.test.json
+--snapshot before``. Ownership must be proven before the audit fetches pages.
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+from dataclasses import asdict
+from pathlib import Path
+
+from ..audit import audit, parse_url
+from ..fetch import is_public
+from .cli import REPO_ROOT, default_deps, git_problems
+from .labels import load_label
+
+SNAPSHOT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def report_path(root: Path, snapshot: str, host: str) -> Path:
+    slug = re.sub(r"[^a-z0-9._-]", "_", host.lower())
+    return Path(root) / "audits" / snapshot / f"{slug}.json"
+
+
+def save_audit(root: Path, snapshot: str, site: str, label_sha256: str, report) -> Path:
+    """Persist the redacted audit output immutably; audit run files are never overwritten."""
+    path = report_path(root, snapshot, site)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    report_data = asdict(report)
+    origin = report_data.pop("site")
+    payload = {"site": site, "origin": origin, "snapshot": snapshot,
+               "label_sha256": label_sha256, **report_data}
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "x", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        os.link(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return path
+
+
+def main(argv=None, *, deps=None, out=print, repo_root=REPO_ROOT) -> int:
+    parser = argparse.ArgumentParser(prog="python -m app.runner.audit_cli")
+    parser.add_argument("--label", required=True)
+    parser.add_argument("--snapshot", required=True)
+    parser.add_argument("--results", type=Path, default=Path(repo_root) / "benchmark" / "results")
+    args = parser.parse_args(argv)
+    if not SNAPSHOT.fullmatch(args.snapshot):
+        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64}.")
+        return 2
+    try:
+        label_path = Path(args.label)
+        label_digest = hashlib.sha256(label_path.read_bytes()).hexdigest()
+        label = load_label(label_path, check_name=True)
+    except (OSError, ValueError) as exc:
+        out(f"Refused: {exc}")
+        return 2
+    if label.audit_checks is None:
+        out("Refused: commit the complete audit_checks pass/fail labels before running this audit.")
+        return 2
+    problems = git_problems([label_path], repo_root=repo_root)
+    if problems:
+        out("Refused: the audit labels must be committed and unchanged before any run (" + "; ".join(problems) + ").")
+        return 2
+    if hashlib.sha256(label_path.read_bytes()).hexdigest() != label_digest:
+        out("Refused: the site label changed while it was being read; no audit was run.")
+        return 2
+    target = report_path(args.results, args.snapshot, label.host)
+    if target.exists():
+        out("Refused: an audit report already exists for this site and snapshot; reports are never overwritten.")
+        return 2
+    try:
+        ref = parse_url(label.site)
+        deps = deps or default_deps()
+        addrs = deps.resolver(ref.hostname)
+        if not addrs or not all(is_public(address) for address in addrs):
+            out("Refused: the host does not resolve to public addresses, so it cannot be audited.")
+            return 2
+        if not deps.verify(ref):
+            out("Refused: control of the host is not proven; the audit did not fetch pages.")
+            return 2
+        fetcher = deps.make_fetcher(ref.netloc, args.snapshot)
+        report = audit(ref.origin, fetcher)
+    except Exception as exc:  # no page or token text is included in exception output
+        out(f"Audit failed ({type(exc).__name__}); no report was recorded.")
+        return 2
+    if hashlib.sha256(label_path.read_bytes()).hexdigest() != label_digest:
+        out("Refused: the site label changed during the audit; no result was saved.")
+        return 2
+    try:
+        path = save_audit(args.results, args.snapshot, label.host, label_digest, report)
+    except FileExistsError:
+        out("Refused: an audit report already exists for this site and snapshot; reports are never overwritten.")
+        return 2
+    out(f"Recorded {label.host} {args.snapshot}: {len(report.findings)} findings at {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

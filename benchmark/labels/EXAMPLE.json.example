@@ -7,5 +7,20 @@
       "required_fields": ["email", ["message", "your message"]]
     },
     "docs_api": { "none_exists": true }
+  },
+  "audit_checks": {
+    "robots_ai": true,
+    "sitemap": true,
+    "llms_txt": true,
+    "json_ld": true,
+    "no_js_content": true,
+    "labelled_forms": true,
+    "no_captcha": true,
+    "no_login_wall": true,
+    "openapi_public": true,
+    "auth_declared": true,
+    "env_not_exposed": true,
+    "git_not_exposed": true,
+    "security_headers": true
   }
 }

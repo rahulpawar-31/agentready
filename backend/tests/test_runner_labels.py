@@ -4,6 +4,7 @@ import json
 import pytest
 
 from app.runner.labels import fetch_key, load_label, normalise_url
+from app.runner.labels import AUDIT_CHECK_IDS
 from app.runner.tasks import STEP_LIMIT, TASK_IDS, TASKS, system_prompt
 
 GOOD = {
@@ -35,6 +36,15 @@ def test_valid_label_loads_and_is_normalised(tmp_path):
     assert lab.tasks["main_info"].urls == ("x.test/pricing",)
     assert lab.tasks["contact_form"].required_fields == (("email",), ("message", "your message"))
     assert lab.tasks["docs_api"].none_exists is True and lab.tasks["docs_api"].urls == ()
+
+
+def test_audit_check_labels_must_cover_every_check_with_real_booleans(tmp_path):
+    audit_checks = {check: True for check in AUDIT_CHECK_IDS}
+    assert load_label(write(tmp_path, dict(GOOD, audit_checks=audit_checks))).audit_checks == audit_checks
+    for bad in (dict(audit_checks, surprise=True), {k: v for k, v in audit_checks.items() if k != "robots_ai"},
+                dict(audit_checks, robots_ai=1)):
+        with pytest.raises(ValueError, match="audit check|audit_checks"):
+            load_label(write(tmp_path, dict(GOOD, audit_checks=bad)))
 
 
 def test_normalise_url_ignores_scheme_fragment_trailing_slash_and_host_case():
