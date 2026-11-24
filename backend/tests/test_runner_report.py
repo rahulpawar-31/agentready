@@ -9,6 +9,7 @@ import pytest
 
 from app.runner import report as rep
 from app.runner.agent import RunResult
+from app.runner.labels import AUDIT_CHECK_IDS
 from app.runner.results import config_dict, harness_sha256, move_aside, save_run
 from app.runner.tasks import TASK_IDS
 
@@ -363,12 +364,14 @@ def test_hostile_text_in_results_never_adds_rows_headings_or_unbounded_lines(env
     md = rep.to_markdown(build(env))
     headings = [l for l in md.splitlines() if l.startswith("#")]
     allowed = {"# AgentReady benchmark evaluation", "## Before (before)", "## After (after)", "## Provenance",
-               "## Paired comparison", "### Per task", "### Per site", "## Sample size", "## Audit check accuracy",
+               "## Paired comparison", "### Per task", "### Per site", "### Before (before)", "### After (after)",
+               "## Sample size", "## Audit check accuracy",
                "## Limitations", "## Warnings", "## Data issues"}
     assert set(headings) <= allowed and "## Injected heading" not in md
     rows = [l for l in md.splitlines() if l.startswith("|")]
-    assert all(l.startswith(("| Site", "| Task", "|---", "| a.test", "| b.test", "| c.test", "| main_info",
-                             "| contact_form", "| docs_api")) for l in rows)
+    allowed_rows = ("| Site", "| Task", "| Check", "|---", "| a.test", "| b.test", "| c.test", "| main_info",
+                    "| contact_form", "| docs_api", *(f"| {check}" for check in AUDIT_CHECK_IDS))
+    assert all(l.startswith(allowed_rows) for l in rows)
     assert not any(l.startswith("| fake") for l in md.splitlines())
     assert max(len(l) for l in md.splitlines()) <= 700
     assert "](https://evil.test)" not in md and "<script>" not in md
@@ -446,9 +449,10 @@ def test_no_labels_and_no_results_is_still_not_a_traceback(tmp_path, capsys):
     assert code == 0 and "No results recorded yet" in capsys.readouterr().out
 
 
-def test_the_audit_check_accuracy_stays_not_measured():
+def test_audit_accuracy_is_not_measured_without_labels_or_saved_audits():
     r = rep.build_report(Path("/nonexistent-results"), Path("/nonexistent-labels"), "before", "after")
-    assert r["audit_check_accuracy"]["status"] == "not measured"
+    assert r["audit_check_accuracy"]["before"]["status"] == "not measured"
+    assert r["audit_check_accuracy"]["after"]["status"] == "not measured"
 
 
 # ===== Group A: the report must not overstate (plan 6 review: C1, C2, I2, I3 and related) =====================

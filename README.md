@@ -76,7 +76,19 @@ python -m app.runner.report --before before --after after --output ../benchmark/
 
 ## Results
 
-**Not yet measured.** The repository holds no benchmark results and no accuracy figure. The numbers will come only from recorded runs, through `python -m app.runner.report`, and will be published with their sample sizes, failures, invalid runs and the small-sample note; see [docs/benchmark.md](docs/benchmark.md) and [docs/benchmark-report.md](docs/benchmark-report.md). Audit-check accuracy stays unmeasured until hand-labelled audit outcomes exist. Results describe only the sites tested.
+**Not yet measured.** The repository holds no benchmark results and no accuracy figure. The numbers will come only from recorded runs, through `python -m app.runner.report`, and will be published with their sample sizes, failures, invalid runs and the small-sample note; see [docs/benchmark.md](docs/benchmark.md) and [docs/benchmark-report.md](docs/benchmark-report.md). Results describe only the sites tested.
+
+## Audit-check accuracy
+
+Before an audit run, independently label all 13 expected check outcomes in the site's committed label file under `audit_checks` (`true` means the check should pass; `false` means it should fail). Then record each owner-verified snapshot:
+
+```bash
+cd backend
+python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot before
+python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot after
+```
+
+The report shows per-check agreement and false-positive rates. A failed readiness check is the positive class; unreachable checks are excluded and counted separately. See [docs/benchmark-report.md](docs/benchmark-report.md).
 
 ## Limitations
 

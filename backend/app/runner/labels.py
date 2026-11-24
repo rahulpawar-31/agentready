@@ -12,6 +12,11 @@ from .tasks import TASK_IDS
 _UNRESERVED = frozenset(string.ascii_letters + string.digits + "-._~")
 _DEFAULT_PORT = {"http": 80, "https": 443}
 MAX_PATTERN_CHARS = 200
+AUDIT_CHECK_IDS = (
+    "robots_ai", "sitemap", "llms_txt", "json_ld", "no_js_content", "labelled_forms",
+    "no_captcha", "no_login_wall", "openapi_public", "auth_declared", "env_not_exposed",
+    "git_not_exposed", "security_headers",
+)
 
 
 def _clean_escapes(text: str) -> str:
@@ -83,6 +88,7 @@ class SiteLabel:
     site: str
     host: str
     tasks: dict
+    audit_checks: dict[str, bool] | None = None
 
 
 def _urls(task_id: str, raw, origin: str) -> tuple[str, ...]:
@@ -173,4 +179,17 @@ def load_label(path, check_name: bool = False) -> SiteLabel:
     if check_name and Path(path).stem != re.sub(r"[^a-z0-9._-]", "_", ref.netloc.lower()):
         raise ValueError("The label file name must be the site's host, for example x.test.json "
                          "(a port becomes an underscore: x.test_8443.json)")
-    return SiteLabel(ref.origin, ref.netloc, {t: _task_label(t, tasks[t], ref.origin) for t in TASK_IDS})
+    audit_checks = data.get("audit_checks")
+    if audit_checks is not None:
+        if not isinstance(audit_checks, dict):
+            raise ValueError("audit_checks must be an object of expected pass/fail booleans")
+        unknown_checks = set(audit_checks) - set(AUDIT_CHECK_IDS)
+        missing_checks = set(AUDIT_CHECK_IDS) - set(audit_checks)
+        if unknown_checks:
+            raise ValueError(f"Unknown audit check(s): {', '.join(sorted(unknown_checks))}")
+        if missing_checks:
+            raise ValueError(f"Missing audit check label(s): {', '.join(sorted(missing_checks))}")
+        if any(not isinstance(value, bool) for value in audit_checks.values()):
+            raise ValueError("Every audit_checks value must be true (expected pass) or false (expected fail)")
+    return SiteLabel(ref.origin, ref.netloc, {t: _task_label(t, tasks[t], ref.origin) for t in TASK_IDS},
+                     audit_checks)
