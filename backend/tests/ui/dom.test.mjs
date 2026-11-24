@@ -68,3 +68,10 @@ test("href accepts only an in-page anchor, because no view links anywhere else",
   assert.throws(() => h("a", { href: "/ui/app.css" }, "x"), /href/);
   assert.equal(serialize(h("a", { href: "#step-1" }, "go")), '<a href="#step-1">go</a>');
 });
+
+test("data- and aria- attribute names must be exactly lower-case words joined by hyphens, to the end of the name", () => {
+  for (const bad of ["data-x onload", "data-x y", "aria-label\n", "data-ok;evil", "data-a=b", "aria-x\"y", "data-x\u2028y", "data--x", "data-x-", "aria-"]) {
+    assert.throws(() => h("div", { [bad]: "1" }), /attribute not allowed/, JSON.stringify(bad));
+  }
+  assert.doesNotThrow(() => h("div", { "data-fix-status": "proposed", "aria-label": "ok", "aria-describedby": "x" }));
+});

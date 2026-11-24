@@ -134,3 +134,56 @@ def test_head_on_anything_that_is_not_a_listed_file_is_a_404_without_ui_headers(
 def test_other_methods_on_ui_routes_still_say_which_methods_are_allowed(client):
     r = client.post("/")
     assert r.status_code == 405 and set(r.headers["allow"].replace(" ", "").split(",")) == {"GET", "HEAD"}
+
+
+# ---------------------------------------------------------------- Group E: files are read once, and links are never followed
+def test_assets_come_from_memory_and_not_from_the_disk_at_request_time(client, monkeypatch, tmp_path):
+    (tmp_path / "app.js").write_text("// a different file on disk\n")
+    (tmp_path / "app.css").write_text("/* different */\n")
+    monkeypatch.setattr(ui_routes, "UI_DIR", tmp_path)
+    served = client.get("/ui/app.js")
+    assert served.status_code == 200
+    assert "a different file on disk" not in served.text
+    assert served.content == ui_routes.UI_FILES["app.js"][0]
+
+
+def test_a_symbolic_link_in_the_ui_directory_is_never_loaded(monkeypatch, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.js").write_text("const secret = 1;\n")
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    (ui / "app.js").write_text("// real\n")
+    (ui / "index.html").write_text("<h1>x</h1>")
+    (ui / "evil.js").symlink_to(outside / "secret.js")
+    (ui / "evil.css").symlink_to(outside)
+    monkeypatch.setattr(ui_routes, "UI_DIR", ui)
+    index, files = ui_routes._load()
+    assert set(files) == {"app.js"} and index == b"<h1>x</h1>"
+
+
+def test_a_missing_ui_directory_loads_nothing_instead_of_failing(monkeypatch, tmp_path):
+    monkeypatch.setattr(ui_routes, "UI_DIR", tmp_path / "nope")
+    assert ui_routes._load() == (b"", {})
+
+
+def test_only_lower_case_js_and_css_files_are_loaded_from_the_directory(monkeypatch, tmp_path):
+    ui = tmp_path / "ui"
+    ui.mkdir()
+    for name in ["app.js", "app.css", "Upper.js", "page.html", "script.py", "notes.txt", "a b.js", "x.JS"]:
+        (ui / name).write_text("// x\n")
+    (ui / "index.html").write_text("<h1>x</h1>")
+    monkeypatch.setattr(ui_routes, "UI_DIR", ui)
+    index, files = ui_routes._load()
+    assert set(files) == {"app.js", "app.css"}
+    assert index == b"<h1>x</h1>"
+
+
+def test_a_head_response_has_an_empty_body_but_the_length_of_the_real_one():
+    body = b"x" * 1234
+    head = ui_routes._response(body, "text/css; charset=utf-8", head=True)
+    assert head.body == b"" and head.headers["content-length"] == "1234"
+    get = ui_routes._response(body, "text/css; charset=utf-8")
+    assert get.body == body and get.headers["content-length"] == "1234"
+    for name, value in ui_routes.UI_HEADERS.items():
+        assert head.headers[name.lower()] == value == get.headers[name.lower()]

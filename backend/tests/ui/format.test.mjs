@@ -97,3 +97,23 @@ test("diffText shows invisible characters as visible markers instead of dropping
   assert.equal(diffText("-a\u2028b"), "-a⟦U+2028⟧b");
   assert.equal(diffText("+plain line with tabs\tand text"), "+plain line with tabs\tand text");
 });
+
+test("an address with a user name, an at sign or other punctuation is refused", async () => {
+  const { domainFromUrl, siteFromInput } = await import("../../app/ui/format.js");
+  for (const bad of ["user@x.test", "@x.test", "x@test", "x.test@evil.test", "x_test", "x test", "x.test/ x", "[::1]", "x.test:", ":80", "-x.test"]) {
+    assert.equal(domainFromUrl(bad), null, JSON.stringify(bad));
+    assert.equal(siteFromInput(bad), null, JSON.stringify(bad));
+  }
+  assert.equal(domainFromUrl("x.test:65535"), "x.test:65535");
+  assert.equal(domainFromUrl("x.test:65536"), null);
+});
+
+test("a safe file name never contains two dots in a row, whatever the server sends", async () => {
+  const { sanitizeFilename } = await import("../../app/ui/format.js");
+  for (const raw of ["a..b", "a...b.txt", "../../etc/passwd", "x/../../y", "..", "....hidden", "a. .b"]) {
+    const name = sanitizeFilename(raw);
+    assert.ok(!name.includes(".."), `${raw} -> ${name}`);
+    assert.match(name, /^[A-Za-z0-9._-]+$/);
+    assert.ok(!name.startsWith("."));
+  }
+});

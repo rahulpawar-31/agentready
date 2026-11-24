@@ -85,3 +85,12 @@ def test_the_words_the_prd_forbids_never_appear_in_visible_strings():
         low = t.lower()
         for word in BANNED_WORDS:
             assert word not in low, f"visible string contains '{word}': {t[:80]!r}"
+
+
+def test_the_page_has_a_polite_live_region_a_skip_link_with_a_real_target_and_a_language():
+    html = read(UI / "index.html")
+    assert re.search(r'<div id="status"[^>]*role="status"[^>]*aria-live="polite"', html)
+    assert re.search(r'<a class="skip-link" href="#main"', html)
+    assert re.search(r'<main id="main"[^>]*tabindex="-1"', html)
+    assert '<html lang="en">' in html
+    assert "<noscript>" in html and 'name="viewport"' in html

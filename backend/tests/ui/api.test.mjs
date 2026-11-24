@@ -183,3 +183,44 @@ test("a conflict carries the server's short detail clipped to 200 characters, an
   assert.equal(r.detail, null);
   assert.ok(!JSON.stringify(r).includes("SECRET-TEXT"));
 });
+
+// ---------------------------------------------------------------- Group E: request options and the timeout
+test("every request is same-origin, never cached and never follows a redirect", async () => {
+  const { fetchImpl, calls } = scripted(reply(200, { ok: 1 }));
+  const api = createApi(fetchImpl);
+  await api.ownershipToken("x.test"); await api.audit("https://x.test"); await api.report(ID); await api.proposeFixes(ID);
+  await api.approve(ID, "llms_txt"); await api.exportFix(ID, "llms_txt");
+  assert.equal(calls.length, 6);
+  for (const c of calls) {
+    assert.equal(c.init.credentials, "same-origin");
+    assert.equal(c.init.cache, "no-store");
+    assert.equal(c.init.redirect, "error");
+    assert.ok(c.path.startsWith("/"), c.path);
+  }
+});
+
+test("a request that takes too long is aborted and reported as a network failure", async () => {
+  let signal;
+  const fetchImpl = (path, init) => { signal = init.signal; return new Promise(() => {}); };
+  const r = await createApi(fetchImpl, { timeoutMs: 10 }).report(ID);
+  assert.equal(r.kind, "network");
+  assert.equal(signal.aborted, true, "the request itself was cancelled");
+});
+
+test("a request that finishes in time leaves no timer behind to abort it later", async () => {
+  let signal;
+  const fetchImpl = async (path, init) => { signal = init.signal; return reply(200, { ok: 1 }); };
+  const r = await createApi(fetchImpl, { timeoutMs: 40 }).report(ID);
+  assert.equal(r.ok, true);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(signal.aborted, false);
+});
+
+test("the snapshot name is checked before any request is made", async () => {
+  const { fetchImpl, calls } = scripted(reply(200, {}));
+  const api = createApi(fetchImpl);
+  for (const bad of ["../etc", "", "a b", "x".repeat(65), "é", null, 5]) {
+    assert.equal((await api.audit("https://x.test", bad)).kind, "invalid", String(bad));
+  }
+  assert.equal(calls.length, 0);
+});

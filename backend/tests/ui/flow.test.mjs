@@ -39,9 +39,9 @@ function server(opts = {}) {
     if (key === "POST /audit") {
       s.audits.push(JSON.parse(init.body));
       if (!s.verified) return reply(403, { detail: INSTRUCTIONS });
-      return reply(200, { id: RID, ...REPORT });
+      return reply(200, { id: RID, ...(s.report ?? REPORT) });
     }
-    if (key === `GET /report/${RID}`) return s.reportStatus ? reply(s.reportStatus, { detail: "Unknown report" }) : reply(200, REPORT);
+    if (key === `GET /report/${RID}`) return s.reportStatus ? reply(s.reportStatus, { detail: "Unknown report" }) : reply(200, s.report ?? REPORT);
     if (key === `POST /report/${RID}/fixes`) return reply(200, { fixes: Object.values(fixes), skipped: [] });
     if (key === `GET /report/${RID}/fixes`) return s.noFixes ? reply(404, { detail: "No fixes proposed yet" }) : reply(200, { fixes: Object.values(fixes), skipped: [] });
     let m = /^POST \/report\/[0-9a-f]{32}\/fixes\/([a-z_]+)\/(approve|reject)$/.exec(key);
@@ -52,7 +52,7 @@ function server(opts = {}) {
       return reply(200, fixes[m[1]]);
     }
     m = /^GET \/report\/[0-9a-f]{32}\/fixes\/([a-z_]+)\/export$/.exec(key);
-    if (m) return fixes[m[1]].status === "approved" ? reply(200, { filename: fixes[m[1]].filename, content: CONTENT, diff: "d", sha256: "a".repeat(64), note: "n" })
+    if (m) return fixes[m[1]].status === "approved" ? reply(200, { filename: s.exportName ?? fixes[m[1]].filename, content: CONTENT, diff: "d", sha256: "a".repeat(64), note: "n" })
       : reply(409, { detail: "Approve this fix before exporting it" });
     return reply(404, { detail: "Not Found" });
   };
@@ -395,10 +395,12 @@ test("an unexpected failure inside a click handler frees the busy lock and shows
 test("printing opens every finding row, and closes again the ones that were closed", async () => {
   const listeners = {};
   const win = { addEventListener: (type, fn) => { listeners[type] = fn; } };
-  const t = await boot({ win });
+  const more = (id) => ({ ...REPORT.findings[0], check_id: id, passed: id === "sitemap" });
+  const report = { ...REPORT, findings: [REPORT.findings[0], more("sitemap"), more("json_ld"), more("robots_ai")] };
+  const t = await boot({ win, serverOpts: { verified: true, report } });
   await toReport(t);
   const rows = findAll(t.els["step-report"], (n) => n.tagName === "details");
-  assert.ok(rows.length > 0);
+  assert.equal(rows.length, 4);
   rows[0].setAttribute("open", "");                         // one row the person had already opened
   listeners.beforeprint();
   assert.ok(rows.every((r) => r.hasAttribute("open")), "all rows are open for the printout");
@@ -522,4 +524,56 @@ test("a 403 from any step but the audit is 'the server refused', never the verif
   await toReport(t);
   await click(t, "step-report", "Propose fixes");
   assert.equal(status(t.els), "The server refused this request.");
+});
+
+// ---------------------------------------------------------------- Group E: the report id stays out of the state views get
+test("the state a view can read never carries the report id", async () => {
+  const t = await boot();
+  await toReport(t);
+  const state = t.app.store.get();
+  assert.ok(!("id" in state.report), "the report object has no id field");
+  assert.ok(!JSON.stringify(state).includes(RID));
+  await click(t, "step-report", "Propose fixes");
+  assert.ok(!JSON.stringify(t.app.store.get()).includes(RID));
+});
+
+test("the address form and the report refuse an address with a user name, a path trick or a second scheme", async () => {
+  const t = await boot();
+  for (const bad of ["user@x.test", "@x.test", "https://user:pw@x.test", "ftp://x.test", "x.test:0", "x.test:70000", "x_test"]) {
+    await enter(t, bad);
+    assert.ok(status(t.els).includes("does not look like a site address"), bad);
+  }
+  assert.equal(t.srv.calls.length, 0);
+});
+
+// ---------------------------------------------------------------- Group E: more behaviour pinned down
+test("a hostile file name from the server is made safe before it reaches the downloader", async () => {
+  const t = await boot({ serverOpts: { verified: true, exportName: "../../evil <name>\u202e.txt" } });
+  await toReport(t);
+  await click(t, "step-report", "Propose fixes");
+  await click(t, "step-fixes", "Approve");
+  await click(t, "step-fixes", "Download");
+  assert.equal(t.downloads.length, 1);
+  assert.match(t.downloads[0].name, /^[A-Za-z0-9._-]+$/);
+  assert.ok(!t.downloads[0].name.includes("..") && !t.downloads[0].name.startsWith("."), t.downloads[0].name);
+});
+
+test("a refused first audit puts the keyboard on the verification steps", async () => {
+  const t = await boot();
+  await enter(t);
+  byTag(t.els["step-url"], "input")[0].focus();            // the person clicked somewhere else in the meantime
+  await click(t, "step-verify", "Verify and audit");
+  assert.equal(t.doc.activeElement.getAttribute("id"), "verify-heading");
+});
+
+test("steps that cannot be drawn after a good lookup leave the old report where it is", async () => {
+  const srv = server({ verified: true });
+  const original = srv.fetch;
+  srv.fetch = async (path, init) => (path.startsWith("/ownership-token?domain=other.test") ? reply(200, { ...INSTRUCTIONS, domain: THROWER }) : original(path, init));
+  const t = await boot({ server: srv });
+  await toReport(t);
+  await enter(t, "other.test");
+  assert.ok(status(t.els).includes("Something went wrong on the server"), status(t.els));
+  assert.ok(shown(t.els, "step-report"), "the old report is still shown");
+  assert.deepEqual([...t.storage.m.values()], [RID], "and its saved id is kept");
 });
