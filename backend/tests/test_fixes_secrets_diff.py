@@ -113,3 +113,9 @@ def test_b_added_lines_ignores_headers_context_removed_and_re_added_page_lines()
     text = added_lines(diff, old)
     assert "<script>snippet</script>" in text and "ABCDEFGHIJKLMNOP" not in text and "+++" not in text
     assert "</head><body>rest</body>" not in text
+
+
+def test_b_the_reviewers_google_key_shape_and_prose_that_merely_starts_with_sk_dash():
+    assert "google api key" in find_secrets("AIza" + "SyA1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6")        # 34 characters after AIza
+    assert "api key (sk-)" in find_secrets("sk-proj-" + "a1" * 20) and "api key (sk-)" in find_secrets("sk-ant-api03-" + "a" * 20 + "1")
+    assert find_secrets("the word sk-eleton-key-skeleton-key-skeleton") == []
