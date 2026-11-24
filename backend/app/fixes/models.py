@@ -27,6 +27,14 @@ class NotEnoughContent(ValueError):
     """The site's own pages do not hold enough to build this output without inventing facts."""
 
 
+class SecretInSiteText(ValueError):
+    """Text taken from the site looks like a secret. Only the label is kept, never the value."""
+
+    def __init__(self, label: str):
+        super().__init__(label)
+        self.label = label
+
+
 @dataclass
 class Fix:
     id: str
@@ -39,6 +47,10 @@ class Fix:
     finding_id: str
     status: FixStatus = FixStatus.PROPOSED
     approved_sha256: str = ""
+    diff_kind: str = "full"      # "excerpt" when the page is too long to show whole
+    warning: str = ""            # something the reviewer should know about the existing page
+    note: str = ""               # context for the reviewer (for example, /llms.txt currently returns HTML)
+    added: "str | None" = None   # text the diff adds that is not the existing page again; None = scan every + line
 
 
 @dataclass(frozen=True)

@@ -96,18 +96,19 @@ def test_a_secret_in_site_text_skips_the_fix_and_the_value_never_appears():
     assert secret not in "".join(x.content + x.diff for x in p.fixes) + "".join(s.reason for s in p.skipped)
 
 
-def test_a_secret_in_the_home_page_html_that_the_diff_would_show_skips_json_ld():
+def test_a_secret_only_in_the_home_page_context_is_a_warning_not_a_block():
     secret = "AKIA" + "ABCDEFGHIJKLMNOP"
     p, _ = run({"/": HOME_ML.replace("<body>", f"<body>\n{secret}")})
-    reason = kinds(p)[1][FixKind.JSON_LD]                  # the diff's context lines would show the secret
-    assert FixKind.JSON_LD not in kinds(p)[0] and "secret" in reason and secret not in reason
-    assert all(find_secrets(x.content + x.diff) == [] for x in p.fixes)
+    ld = next(x for x in p.fixes if x.kind is FixKind.JSON_LD)
+    assert "aws access key" in ld.warning and secret not in ld.warning and secret not in ld.content
+    assert all(find_secrets(x.content) == [] for x in p.fixes)
 
 
-def test_an_oversized_diff_is_skipped():
+def test_a_page_whose_diff_would_be_too_large_gets_an_excerpt_not_a_skip():
     big = "<html><head><title>T</title><meta name='description' content='d'></head><body>" + "x " * 100_000 + "</body></html>"
     p, _ = run({"/": big})
-    assert "too large" in kinds(p)[1][FixKind.JSON_LD]
+    ld = next(x for x in p.fixes if x.kind is FixKind.JSON_LD)
+    assert ld.diff_kind == "excerpt" and len(ld.diff) < 5000
 
 
 def test_an_invalid_output_is_never_presented(monkeypatch):
@@ -139,16 +140,100 @@ def test_an_llms_txt_that_could_not_be_checked_is_not_proposed_as_missing():
     assert FixKind.LLMS_TXT not in kinds(p)[0] and "could not" in kinds(p)[1][FixKind.LLMS_TXT]
 
 
-def test_proposals_are_deterministic_and_make_no_requests():
+def test_proposals_are_deterministic():
     a, f = run({"/": HOME})
-    n = len(f.calls)
     report = audit(O, f)
-    n_after_audit = len(f.calls)
     b = propose_fixes(report, capture_baseline(O, f))
     c = propose_fixes(report, capture_baseline(O, f))
     assert [(x.id, x.content, x.diff) for x in a.fixes] == [(x.id, x.content, x.diff) for x in b.fixes] == \
            [(x.id, x.content, x.diff) for x in c.fixes]
-    base = capture_baseline(O, f)
+    assert [(s.kind, s.reason) for s in a.skipped] == [(s.kind, s.reason) for s in b.skipped]
+
+
+def test_proposing_makes_no_request_and_writes_no_file(monkeypatch):
+    import builtins
+    import socket
+    f = FakeFetcher({f"{O}/": page(f"{O}/", HOME), f"{O}/openapi.json": page(
+        f"{O}/openapi.json", json.dumps({"openapi": "3.0.0", "paths": {"/a": {"get": {"summary": "A"}}}}))})
+    report = audit(O, f)
+    baseline = capture_baseline(O, f)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("propose_fixes touched the network or a file")
+
+    real_open = builtins.open
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(builtins, "open", lambda file, mode="r", *a, **k: forbidden() if any(x in mode for x in "wax+")
+                        else real_open(file, mode, *a, **k))
     calls = len(f.calls)
-    propose_fixes(report, base)
-    assert len(f.calls) == calls        # propose_fixes itself takes no fetcher and makes no request
+    p = propose_fixes(report, baseline)
+    assert [x.id for x in p.fixes] == ["llms_txt", "json_ld", "mcp_stub"] and len(f.calls) == calls
+
+
+# --- Group B: secrets are checked in the text a site supplies and in what is generated, not in page context
+def _g(n):
+    return ("a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" * 3)[:n]
+
+
+def home_with(description="Handmade shoes.", title="Acme Shoes", link_text="Shop", extra_body=""):
+    return (f'<html><head><title>{title}</title><meta name="description" content="{description}"></head>'
+            f'<body><a href="/shop">{link_text}</a>{extra_body}<p>' + "word " * 80 + "</p></body></html>")
+
+
+def test_b_a_secret_in_the_description_skips_both_fixes_and_never_appears():
+    secret = "whsec_" + _g(20)
+    p, _ = run({"/": home_with(description=f"STRIPE_SECRET_KEY={secret}")})
+    reasons = kinds(p)[1]
+    assert p.fixes == [] and "secret" in reasons[FixKind.LLMS_TXT] and "secret" in reasons[FixKind.JSON_LD]
+    assert secret not in "".join(reasons.values())
+
+
+def test_b_a_provider_key_in_free_text_is_caught_even_after_markdown_cleaning_would_change_it():
+    key = "sk_" + "live_" + _g(24)                    # the Markdown clean-up removes underscores: scan the raw text
+    p, _ = run({"/": home_with(title=f"Pay with {key} now")})
+    assert p.fixes == [] and all("secret" in r for r in kinds(p)[1].values() if "OpenAPI" not in r)
+    assert key not in "".join(r for r in kinds(p)[1].values())
+
+
+def test_b_a_secret_in_link_text_drops_that_link_but_keeps_the_fix():
+    key = "AIza" + _g(35)
+    p, _ = run({"/": home_with(link_text=key, extra_body='<a href="/about">About us</a>')})
+    fix = next(x for x in p.fixes if x.kind is FixKind.LLMS_TXT)
+    assert "About us" in fix.content and key not in fix.content and key not in fix.diff
+
+
+def test_b_a_secret_in_a_link_path_drops_that_link():
+    key = "AKIA" + "ABCDEFGHIJKLMNOP"
+    p, _ = run({"/": home_with(extra_body=f'<a href="/reset/{key}">Reset</a>')})
+    fix = next(x for x in p.fixes if x.kind is FixKind.LLMS_TXT)
+    assert "Reset" not in fix.content and key not in fix.content
+
+
+def test_b_a_secret_in_an_openapi_summary_skips_only_the_stub():
+    spec = {"openapi": "3.0.0", "paths": {"/a": {"get": {"summary": "key " + "sk_" + "live_" + _g(24)}}}}
+    p, _ = run({"/": home_with(), "/openapi.json": json.dumps(spec)})
+    assert FixKind.MCP_STUB not in kinds(p)[0] and "secret" in kinds(p)[1][FixKind.MCP_STUB]
+    assert [x.kind for x in p.fixes] == [FixKind.LLMS_TXT, FixKind.JSON_LD]
+
+
+def test_i1_a_public_jwt_in_the_page_does_not_block_either_fix_and_is_flagged_as_a_warning():
+    jwt = "eyJhbGciOiJIUzI1NiJ9." + "eyJyb2xlIjoiYW5vbiJ9." + "c2lnbmF0dXJlMTIzNDU2"
+    p, _ = run({"/": home_with(extra_body=f"<script>var supabaseKey = '{jwt}';</script>")})
+    assert [x.kind for x in p.fixes] == [FixKind.LLMS_TXT, FixKind.JSON_LD]
+    ld = p.fixes[1]
+    assert "jwt" in ld.warning and "did not copy it" in ld.warning and jwt not in ld.warning
+    assert jwt in ld.diff                                    # the page's own line is shown as context, as before
+    assert p.fixes[0].warning == ""
+
+
+def test_i1_an_html_soft_404_at_llms_txt_is_not_a_real_llms_txt():
+    shell = "<!DOCTYPE html><html><head><title>App</title></head><body><div id=root></div></body></html>"
+    p, _ = run({"/": home_with(), "/llms.txt": shell})
+    fix = next(x for x in p.fixes if x.kind is FixKind.LLMS_TXT)
+    assert fix.diff.startswith("--- /dev/null") and "HTML page" in fix.note and "<div" not in fix.diff
+
+
+def test_i1_a_real_existing_llms_txt_is_still_left_alone():
+    p, _ = run({"/": home_with(), "/llms.txt": "# Mine\n> mine\n"})
+    assert FixKind.LLMS_TXT not in kinds(p)[0] and "already present" in kinds(p)[1][FixKind.LLMS_TXT]

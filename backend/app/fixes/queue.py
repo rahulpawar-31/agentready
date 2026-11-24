@@ -5,7 +5,7 @@ not be approved again. Approval records the content hash and exports nothing; ex
 import hashlib
 
 from .models import ExportBundle, Fix, FixKind, FixStatus
-from .secrets import find_secrets
+from .secrets import added_lines, find_secrets
 
 
 class UnknownFix(KeyError):
@@ -25,10 +25,13 @@ def _sha(text: str) -> str:
 
 
 def summary(fix: Fix) -> dict:
-    """What a reviewer sees: the diff and the status, never a `content` field."""
+    """What a reviewer sees: the diff and the status, with no separate `content` field. For a new file the diff
+    already shows the whole file (review needs that); the export is the download or copy action, and it is the part
+    that is only possible after approval."""
     return {"id": fix.id, "kind": fix.kind.value, "path": fix.path, "filename": fix.filename,
             "description": fix.description, "finding_id": fix.finding_id, "status": fix.status.value,
-            "diff": fix.diff, "sha256": _sha(fix.content)}
+            "diff": fix.diff, "diff_kind": fix.diff_kind, "warning": fix.warning, "note": fix.note,
+            "sha256": _sha(fix.content)}
 
 
 class FixQueue:
@@ -54,7 +57,7 @@ class FixQueue:
         if fix.status is FixStatus.APPROVED:
             return fix
         if fix.status is FixStatus.REJECTED:
-            raise InvalidTransition("a rejected fix cannot be approved; propose again")
+            raise InvalidTransition("a rejected fix cannot be approved again; the only way back is a new audit")
         fix.status = FixStatus.APPROVED
         fix.approved_sha256 = _sha(fix.content)
         return fix
@@ -78,7 +81,8 @@ class FixQueue:
         problems = validator(fix.content)
         if problems:
             raise NotApproved(f"The fix no longer passes validation: {problems[0]}")
-        labels = find_secrets(fix.content) or find_secrets(fix.diff)
+        added = fix.added if fix.added is not None else added_lines(fix.diff)
+        labels = find_secrets(fix.content) or find_secrets(added)
         if labels:
             raise NotApproved(f"The fix contains a secret-like value ({labels[0]})")
         note = "Review before you deploy. AgentReady has not changed your site."

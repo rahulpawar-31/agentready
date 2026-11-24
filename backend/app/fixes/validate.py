@@ -16,7 +16,8 @@ _BAD_CHAR = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
 
 def _on_host(url: str, origin: str) -> bool:
     try:
-        return urlsplit(url).netloc.lower() == urlsplit(origin).netloc.lower() and urlsplit(url).scheme in ("http", "https")
+        got, want = urlsplit(url), urlsplit(origin)
+        return got.netloc.lower() == want.netloc.lower() and got.scheme == want.scheme and got.scheme in ("http", "https")
     except ValueError:
         return False
 
@@ -79,6 +80,69 @@ def validate_json_ld_snippet(snippet: str) -> list[str]:
 
 
 _STUB_IMPORTS = {"json", "urllib.parse", "urllib.request"}
+_STUB_FUNCTIONS = ("_text", "call_tool")
+# Every call the stub may make. Anything else inside any function or at the top level is a problem.
+_STUB_CALLS = {"isinstance", "str", "ValueError", "json.loads", "urllib.parse.quote", "urllib.parse.urlencode",
+               "urllib.request.Request", "urllib.request.build_opener", "_NoRedirect", "_text", "arguments.items",
+               "path.replace", "_OPENER.open", "response.read"}
+_STUB_METHODS_ON_RESULTS = {"decode"}            # response.read(...).decode(...)
+_STUB_BANNED_NAMES = {"os", "sys", "subprocess", "socket", "shutil", "open", "exec", "eval", "compile", "__import__",
+                      "getattr", "setattr", "delattr", "globals", "locals", "vars", "input", "breakpoint"}
+_STUB_VERBS = {"POST", "PUT", "DELETE", "PATCH", "CONNECT", "TRACE"}
+
+
+def _dotted(node):
+    """"a.b.c" for a chain of names and attributes, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def _leftmost(node):
+    while isinstance(node, ast.BinOp):
+        node = node.left
+    return node
+
+
+def _inspect_stub_code(tree) -> list:
+    """What the stub's code does, not only what it looks like: every function body is checked."""
+    problems = []
+    if sorted(n.name for n in tree.body if isinstance(n, ast.FunctionDef)) != sorted(_STUB_FUNCTIONS):
+        problems.append("the stub must define exactly the functions _text and call_tool")
+    top_level = {id(n) for n in tree.body}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in top_level:
+            problems.append("an import inside a function or class is not allowed")
+        elif isinstance(node, ast.Call):
+            name = _dotted(node.func)
+            allowed = (name in _STUB_CALLS) if name else (isinstance(node.func, ast.Attribute)
+                                                          and node.func.attr in _STUB_METHODS_ON_RESULTS)
+            if not allowed:
+                problems.append(f"a call to {name or 'an expression'} is not allowed in the stub")
+        elif isinstance(node, ast.Name) and node.id in _STUB_BANNED_NAMES:
+            problems.append(f"the name {node.id} is not allowed in the stub")
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            problems.append("a dunder attribute is not allowed in the stub")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.upper() in _STUB_VERBS:
+            problems.append("the stub names an HTTP method other than GET")
+    requests = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _dotted(n.func) == "urllib.request.Request"]
+    shape_ok = (len(requests) == 1 and len(requests[0].args) == 1 and isinstance(requests[0].args[0], ast.Name)
+                and requests[0].args[0].id == "url" and len(requests[0].keywords) == 1
+                and requests[0].keywords[0].arg == "method" and isinstance(requests[0].keywords[0].value, ast.Constant)
+                and requests[0].keywords[0].value.value == "GET")
+    if not shape_ok:
+        problems.append("the request must be urllib.request.Request(url, method=\"GET\") and nothing else")
+    url_assignments = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                       and any(isinstance(t, ast.Name) and t.id == "url" for t in n.targets)]
+    start = _leftmost(url_assignments[0].value) if len(url_assignments) == 1 else None
+    if not (isinstance(start, ast.Name) and start.id == "BASE_URL"):
+        problems.append("the request URL must start from BASE_URL")
+    return list(dict.fromkeys(problems))
 
 
 def validate_mcp_stub(source: str, spec: dict, origin: str) -> list[str]:
@@ -111,8 +175,9 @@ def validate_mcp_stub(source: str, spec: dict, origin: str) -> list[str]:
             problems.append("a top-level statement other than an import, assignment or function")
     if no_redirect_classes != 1:
         problems.append("the stub must define exactly one no-redirect handler")
+    problems += _inspect_stub_code(tree)
     base_url = [n.value.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
-                and len(n.targets) == 1 and getattr(n.targets[0], "id", "") == "BASE_URL"]
+                and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "BASE_URL"]
     if base_url != [origin]:
         problems.append("BASE_URL is not the verified origin")
     try:

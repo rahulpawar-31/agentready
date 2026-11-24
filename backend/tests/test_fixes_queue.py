@@ -29,7 +29,8 @@ def test_approval_exports_nothing_and_the_summary_has_no_content_field():
     result = q.approve("llms_txt")
     assert result.status is FixStatus.APPROVED
     s = summary(result)
-    assert set(s) == {"id", "kind", "path", "filename", "description", "finding_id", "status", "diff", "sha256"}
+    assert set(s) == {"id", "kind", "path", "filename", "description", "finding_id", "status", "diff", "diff_kind",
+                     "warning", "note", "sha256"}
     assert s["status"] == "approved" and s["diff"] and len(s["sha256"]) == 64 and s["kind"] == "llms_txt"
 
 
@@ -118,3 +119,20 @@ def test_one_fixs_approval_does_not_approve_another():
 def test_duplicate_fix_ids_are_refused():
     with pytest.raises(ValueError):
         FixQueue([fix(), fix()], {})
+
+
+def test_b_export_scans_the_content_and_added_lines_but_not_the_context_lines():
+    jwt = "eyJhbGciOiJIUzI1NiJ9." + "eyJyb2xlIjoiYW5vbiJ9." + "c2lnbmF0dXJlMTIzNDU2"
+    context = fix(content="# Acme\n> hi\n")
+    context.diff = f"--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n var k = '{jwt}';\n+# Acme\n </head>\n"
+    context.added = "# Acme"
+    q = queue(context)
+    q.approve("llms_txt")
+    assert q.export("llms_txt").content == "# Acme\n> hi\n"            # a public token in page context does not block it
+    added = fix(content="# Acme\n> hi\n")
+    added.diff = f"--- a/x\n+++ b/x\n@@ -1,1 +1,2 @@\n+key {'AKIA' + 'ABCDEFGHIJKLMNOP'}\n"
+    added.added = "key " + "AKIA" + "ABCDEFGHIJKLMNOP"
+    q2 = queue(added)
+    q2.approve("llms_txt")
+    with pytest.raises(NotApproved):
+        q2.export("llms_txt")
