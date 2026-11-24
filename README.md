@@ -66,6 +66,17 @@ a hash of the whole harness (tools, prompts, task wording, limits) that must equ
 capped at 10, and the label file must be named after the site's host. The runner measures discovery and retrieval
 only, with a fixed toolset and a fixed step limit; results describe only the sites tested.
 
+### Summarising benchmark results (Plan 6)
+
+After recording the before and after snapshots, generate the evaluation report:
+
+    cd backend && python -m app.runner.report --before before --after after
+
+Use `--format json --output ../benchmark/results/evaluation.json` to save machine-readable output.
+The report lists sample sizes, failures, invalid runs, repeat spread and a paired before/after change.
+Audit-check agreement and false-positive rates remain unmeasured until hand-labelled audit outcomes
+and matching audit findings are recorded; see [`docs/benchmark-report.md`](docs/benchmark-report.md).
+
 ### Known limitations
 
 - Text hidden with CSS (`display:none`, off-screen) is shown to the model like any other text, because the runner
