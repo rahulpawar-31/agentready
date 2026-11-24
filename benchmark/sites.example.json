@@ -1,0 +1,36 @@
+{
+  "_comment": "An example of the registry format. The hosts are reserved example names, not real sites. Copy entries into benchmark/sites.json, one per benchmark site. owner_type is team (the team controls the site) or permission (written permission is on file: say where in permission_note; for an after run the note must record permission to change or deploy). verification is dns or meta (dns is not available for a host with a port). label is the file in benchmark/labels named after the host. after_eligible is true only for a site whose owner will deploy the approved files; after_method is then staging or live.",
+  "version": 1,
+  "sites": [
+    {
+      "host": "demo.example.org",
+      "owner_type": "team",
+      "verification": "meta",
+      "label": "demo.example.org.json",
+      "after_eligible": true,
+      "after_method": "staging",
+      "permission_note": "",
+      "notes": "Team-owned demo site; the after run uses a staging copy."
+    },
+    {
+      "host": "docs.example.net",
+      "owner_type": "permission",
+      "verification": "dns",
+      "label": "docs.example.net.json",
+      "after_eligible": true,
+      "after_method": "live",
+      "permission_note": "Written OK from the site owner (email of 20 Nov, kept by the team) to test and to deploy a change.",
+      "notes": "Run with the owner's permission; the owner deploys the approved files."
+    },
+    {
+      "host": "shop.example.com",
+      "owner_type": "permission",
+      "verification": "meta",
+      "label": "shop.example.com.json",
+      "after_eligible": false,
+      "after_method": "",
+      "permission_note": "Written OK from the owner to test (read-only) only.",
+      "notes": "Before-only: reported in the results, no after run."
+    }
+  ]
+}
