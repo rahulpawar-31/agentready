@@ -31,12 +31,12 @@ configuration). What was tested: the official MCP Python client, over real HTTP,
 
 | Tool | What it does |
 |---|---|
-| `audit_site(url, snapshot="default")` | Audits a site. **Requires proof of control** (a DNS TXT record or a meta tag the owner adds). An unverified site gets a tool error with code `control_not_proven` and the verification instructions, exactly the information the REST API puts in its 403. Returns the score, the findings (URL, check, evidence, confidence, status) and a `report_id`. Takes about 10 seconds. |
+| `audit_site(url, snapshot="default")` | Audits a site. **Requires proof of control** (a DNS TXT record or a meta tag the owner adds). An unverified site gets a tool error with code `control_not_proven` and the verification instructions, exactly the information the REST API puts in its 403. Returns the score, the findings (URL, check, evidence, confidence, status) and a `report_id`. Takes about 10 seconds. At most one audit per host at a time and at least 5 seconds between starts (`rate_limited`), at most four audits running at once (`busy`). |
 | `get_report(report_id)` | Returns a stored report. Read-only. |
 | `propose_fixes(report_id)` | Proposes an `llms.txt`, a JSON-LD snippet and an OpenAPI-to-MCP stub (when the site has an OpenAPI document), each with a diff, plus what was skipped and why. Safe to call again: it never resets a decision. Each fix has a `status` (`proposed`, `approved`, `rejected`) that shows the owner's decision. |
 
-Errors from our code are JSON with a fixed `error` code: `control_not_proven`, `invalid_request`, `not_found` or
-`failed` (a fixed message; exception text is never sent to the client). The SDK sends them as
+Errors from our code are JSON with a fixed `error` code: `control_not_proven`, `invalid_request`, `not_found`, `busy`,
+`rate_limited` (with `retry_after_seconds`) or `failed` (a fixed message; exception text is never sent to the client). The SDK sends them as
 `Error executing tool <name>: {json}`, so parse from the first `{`. Errors raised by the SDK itself before our code runs
 (an argument of the wrong type or a missing argument, an unknown tool name) are the SDK's plain text, not our JSON; they
 echo only the caller's own input.
@@ -58,7 +58,9 @@ was proposed.
 ## Safety model
 
 - **Same gate.** `audit_site` calls `post_audit`, the REST route function, with the same dependencies. A host that
-  resolves to a non-public address is refused before any request; an unverified site gets only the verification probe.
+  resolves to a non-public address is refused before any request. An unverified site gets only the verification probe,
+  and that probe goes to the **requested** host before control is proven: one DNS TXT lookup, one DNS resolve and one GET
+  of its home page. Once control is proven, the audit's requests go only to that verified host.
 - **No new network path.** The tools add no fetching of their own. Site requests go through the existing guard (verified
   host only, redirects rechecked, pinned public addresses, rate limit, request budget). `get_report` and
   `propose_fixes` make no site requests.
@@ -81,7 +83,21 @@ was proposed.
 - **The `report_id` is a credential.** Whoever holds it can read the report and call `propose_fixes`; with the REST API
   they could also approve and export. It is returned to the calling agent and appears in URLs and logs of the REST API.
   Treat it like a secret.
-- **A slow audit does not block anything else.** The blocking work runs in a worker thread.
+- **Audits are limited so an agent cannot hammer a site or starve the server.**
+  - *Per host:* at most one audit in flight per host (normalised host and port) and at least 5 seconds between two starts
+    of the same host; a call inside that window gets `rate_limited` with `retry_after_seconds`. The throttle is applied
+    **before** the verification probe, so an agent cannot use unverified hosts to loop probes: a refused call makes no
+    DNS lookup and no request. Calls with an invalid URL or snapshot make no request and do not use a host's turn. The
+    table of hosts is bounded (1,000; the oldest are forgotten). This limit is in the MCP adapter only; `POST /audit`
+    behaves as before.
+  - *Concurrency:* at most four audits run at once. A fifth call waits up to 2 seconds for a slot and then gets `busy`
+    (and does not use up its host's turn). Audits wait for their slot on the event loop, not in a thread, so the shared
+    worker-thread pool that every REST route and the other tools use stays free (a test runs 48 slow audits and checks a
+    REST call and `get_report` stay fast).
+  - *Not limited:* a global rate across all hosts beyond these, and the number of snapshot names (see Limits).
+- **No sessions are kept.** The transport is stateless: every request stands alone, so nobody can open thousands of
+  anonymous sessions to use up memory, and a server restart loses nothing an agent holds (only the in-memory reports,
+  see Limits).
 
 ## Limits
 
@@ -89,3 +105,7 @@ was proposed.
 - One process: the MCP endpoint and the REST API share their stores because they run together. Running the MCP server as a
   separate process (for example over stdio) would give it an empty store, so it is not offered.
 - The MCP tools return the same data as the REST API, clipped. They do not stream progress.
+- Each new `snapshot` name creates its own on-disk cache directory, and there is no limit on how many (a cap is
+  deferred). Re-auditing the **same** snapshot returns the cached pages, not a fresh look at the site: after the owner
+  deploys a fix, audit again with a **new** snapshot name (for example `after`), otherwise the report describes the old
+  pages.

@@ -12,7 +12,7 @@ from tests.mcp_helpers import run
 
 @pytest.fixture
 def server():
-    return build_server(main)
+    return build_server(main, host_interval=0)
 
 
 def tools_of(server):
@@ -148,3 +148,10 @@ def test_an_enormous_result_has_its_lists_cut_and_is_still_valid_json_under_the_
 def test_a_normal_sized_result_is_not_marked_truncated():
     out = decorate({"site": "https://x.test", "findings": [finding(i) for i in range(13)]})
     assert "result_truncated" not in out
+
+
+def test_the_audit_description_is_honest_about_who_receives_the_probe(server):
+    d = {t.name: (t.description or "") for t in tools_of(server)}["audit_site"].lower()
+    assert "before control is proven" in d and "dns" in d and "requested host" in d and "home page" in d
+    assert "verified host only" not in d                  # the probe goes to the host that was asked for
+    assert "one audit per host" in d or "one audit at a time" in d

@@ -520,3 +520,9 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
   of the MCP fix summaries, `REPORT_ID` uses `fullmatch`, and an evicted report is `not_found`
   (`get_report` reads under the store lock). The docs no longer imply the content is hidden: a new file's diff is the
   file.
+- **Group C (availability and abuse).** The plan said a slow audit "never blocks other MCP or REST calls"; that held for
+  one audit only (48 concurrent audits exhausted anyio's 40-thread pool). Now `audit_site` takes one of four slots from an
+  `anyio.CapacityLimiter` (per event loop) before it uses a worker thread, waits at most 2 seconds, then returns `busy`.
+  A per-host throttle in the MCP adapter (one in flight, 5 seconds between starts, 1,000 hosts remembered, injectable
+  clock) runs before the verification probe and returns `rate_limited`. The tool description now says the probe goes
+  to the requested host. The transport is stateless (no sessions). Tests: `tests/test_mcp_abuse.py`, `tests/test_mcp_http.py`.

@@ -17,7 +17,7 @@ def _clean_stores():
 
 @pytest.fixture
 def server():
-    return build_server(main)
+    return build_server(main, host_interval=0)       # these tests audit the same fake host repeatedly
 
 
 # --- audit_site ---------------------------------------------------------------------------------------------

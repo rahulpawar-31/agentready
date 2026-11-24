@@ -155,3 +155,13 @@ def test_a_real_mcp_client_talks_to_the_real_app_with_its_own_lifespan():
             async with Client(f"http://127.0.0.1:{live.port}/mcp") as c:
                 return sorted(t.name for t in (await c.list_tools()).tools)
         assert run(go()) == ["audit_site", "get_report", "propose_fixes"]
+
+
+def test_the_server_is_stateless_so_anonymous_initialises_cannot_pile_up_sessions():
+    """Review finding M1: every initialize created a session (about 36 KB each, up to 10,000) that anyone could open.
+    The tools need no state between requests, so the transport keeps none."""
+    with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
+        r = c.post("/mcp", headers=HEADERS, json=INIT)
+        assert r.status_code == 200 and "mcp-session-id" not in {k.lower() for k in r.headers}
+        listed = c.post("/mcp", headers=HEADERS, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert listed.status_code == 200 and "audit_site" in listed.text
