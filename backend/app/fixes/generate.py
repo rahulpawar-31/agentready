@@ -8,7 +8,9 @@ from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
-from .models import DESC_CLIP, FIELD_CLIP, LINK_TEXT_CLIP, LLMS_MAX_LINKS, MCP_MAX_TOOLS, NotEnoughContent
+from .models import (DESC_CLIP, FIELD_CLIP, LINK_TEXT_CLIP, LLMS_MAX_LINKS, MCP_MAX_TOOLS, NotEnoughContent,
+                     SecretInSiteText)
+from .secrets import find_secrets
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
 _SPACES = re.compile(r"\s+")
@@ -23,6 +25,15 @@ def _clean(text, limit: int) -> str:
 def _md_safe(text, limit: int) -> str:
     """Also drops the characters that could start a Markdown link or an HTML tag."""
     return _clean(_MARKUP.sub("", _clean(text, 10_000)), limit)
+
+
+def _guard(raw) -> None:
+    """Raise SecretInSiteText if a string taken from the site looks like a secret. It is checked as the site wrote
+    it, before any clean-up that could change its shape."""
+    if isinstance(raw, str):
+        labels = find_secrets(raw)
+        if labels:
+            raise SecretInSiteText(labels[0])
 
 
 def _soup(html: str) -> BeautifulSoup:
@@ -68,18 +79,24 @@ def _site_link(origin: str, href: str):
 
 def build_llms_txt(origin: str, home_html: str) -> str:
     soup = _soup(home_html)
-    title = _md_safe(_title(soup), FIELD_CLIP)
+    raw_title, raw_description = _title(soup), _description(soup)
+    _guard(raw_title)
+    _guard(raw_description)
+    title = _md_safe(raw_title, FIELD_CLIP)
     if not title:
         raise NotEnoughContent("the home page has no title")
-    description = _md_safe(_description(soup), DESC_CLIP)
+    description = _md_safe(raw_description, DESC_CLIP)
     links, seen = [], set()
     for a in soup.find_all("a", href=True, limit=_MAX_ANCHORS):
         if len(links) >= LLMS_MAX_LINKS:
             break
         href = a["href"]
         url = _site_link(origin, href if isinstance(href, str) else "")
-        text = _md_safe(_text(a, 4 * LINK_TEXT_CLIP), LINK_TEXT_CLIP)
+        raw_text = _text(a, 4 * LINK_TEXT_CLIP)
+        text = _md_safe(raw_text, LINK_TEXT_CLIP)
         if url is None or not text or url in seen:
+            continue
+        if find_secrets(raw_text) or find_secrets(url):         # a link that carries a secret is left out
             continue
         seen.add(url)
         links.append(f"- [{text}]({url})")
@@ -95,11 +112,14 @@ def build_llms_txt(origin: str, home_html: str) -> str:
 
 def build_json_ld(origin: str, home_html: str) -> dict:
     soup = _soup(home_html)
-    name = _clean(_title(soup), FIELD_CLIP)
+    raw_title, raw_description = _title(soup), _description(soup)
+    _guard(raw_title)
+    _guard(raw_description)
+    name = _clean(raw_title, FIELD_CLIP)
     if not name:
         raise NotEnoughContent("the home page has no title")
     data = {"@context": "https://schema.org", "@type": "WebSite", "name": name, "url": origin}
-    description = _clean(_description(soup), DESC_CLIP)
+    description = _clean(raw_description, DESC_CLIP)
     if description:
         data["description"] = description
     return data
@@ -187,9 +207,12 @@ def _tools_from_spec(spec) -> list:
         operation = item.get("get")
         if not isinstance(operation, dict):
             continue
+        for raw in (path, operation.get("operationId"), operation.get("summary"), operation.get("description")):
+            _guard(raw)
         declared = {}
         for p in _parameters(item, operation):
             name, where = p.get("name"), p.get("in")
+            _guard(name)
             if isinstance(name, str) and _PARAM_OK.match(name) and where in ("path", "query"):
                 declared[(where, name)] = (_schema_type(p.get("schema")), p.get("required") is True)
         path_params = [n for n in dict.fromkeys(_PLACEHOLDER.findall(path)) if _PARAM_OK.match(n)]

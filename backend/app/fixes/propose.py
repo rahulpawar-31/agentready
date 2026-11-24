@@ -6,8 +6,8 @@ from ..models import Report, Status
 from .baseline import Baseline
 from .diff import make_diff
 from .generate import build_json_ld, build_llms_txt, build_mcp_stub, json_ld_snippet
-from .models import Fix, FixKind, NotEnoughContent, Proposal, Skipped
-from .secrets import find_secrets
+from .models import Fix, FixKind, NotEnoughContent, Proposal, SecretInSiteText, Skipped
+from .secrets import added_lines, find_secrets
 from .validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_stub
 
 DIFF_MAX_CHARS = 100_000        # a diff the owner cannot realistically review is not presented
@@ -32,10 +32,12 @@ def _finding(report: Report, check_id: str):
     return next((f for f in report.findings if f.check_id == check_id), None)
 
 
-def _problem(content: str, diff: str, problems: list):
+def _problem(content: str, diff: str, problems: list, added: str):
+    """Only what AgentReady generates is checked for secrets: the content and the diff's added lines. The existing
+    page shown as context is the owner's own and is not part of the output."""
     if problems:
         return f"failed validation: {problems[0]}"
-    labels = find_secrets(content) or find_secrets(diff)
+    labels = find_secrets(content) or find_secrets(added)
     if labels:
         return f"contains a secret-like value ({labels[0]})"
     if len(diff) > DIFF_MAX_CHARS:
@@ -43,9 +45,19 @@ def _problem(content: str, diff: str, problems: list):
     return ""
 
 
-def _finish(fix: Fix, problems: list):
-    reason = _problem(fix.content, fix.diff, problems)
-    return (None, Skipped(fix.kind, reason)) if reason else (fix, None)
+def _finish(fix: Fix, problems: list, existing: str = ""):
+    fix.added = added_lines(fix.diff, existing)
+    reason = _problem(fix.content, fix.diff, problems, fix.added)
+    if reason:
+        return None, Skipped(fix.kind, reason)
+    labels = find_secrets(existing) if existing else []
+    if labels:
+        fix.warning = f"the existing page contains a secret-like value ({labels[0]}); AgentReady did not copy it"
+    return fix, None
+
+
+def _is_html(body) -> bool:
+    return isinstance(body, str) and body.lstrip()[:200].lower().startswith(("<!doctype", "<html"))
 
 
 def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
@@ -65,7 +77,9 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
 
     # llms.txt
     f = _finding(report, "llms_txt")
-    if f is not None and f.passed:
+    existing_llms = baseline.body("/llms.txt")
+    soft_404 = _is_html(existing_llms)                  # an HTML page served at /llms.txt is not an llms.txt file
+    if f is not None and f.passed and not soft_404:
         skipped.append(Skipped(FixKind.LLMS_TXT, "llms.txt is already present"))
     elif f is not None and f.status is Status.UNREACHABLE:
         skipped.append(Skipped(FixKind.LLMS_TXT, "the check could not reach /llms.txt, so it is not known whether one exists"))
@@ -78,12 +92,17 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
             text = build_llms_txt(origin, home)
         except NotEnoughContent:
             skipped.append(Skipped(FixKind.LLMS_TXT, "not enough content on the home page"))
+        except SecretInSiteText as e:
+            skipped.append(Skipped(FixKind.LLMS_TXT, f"contains a secret-like value ({e.label})"))
         else:
             fix = Fix("llms_txt", FixKind.LLMS_TXT, "/llms.txt", "llms.txt",
                       "Add /llms.txt, a short Markdown summary of the site for AI agents, built from the home page's "
                       "title, description and on-site links.",
-                      text, make_diff("llms.txt", baseline.body("/llms.txt"), text), "llms_txt")
-            add(_finish(fix, validate_llms_txt(text, origin)))
+                      text, make_diff("llms.txt", None if soft_404 else existing_llms, text), "llms_txt")
+            if soft_404:
+                fix.note = ("/llms.txt currently returns an HTML page (a soft 404), not an llms.txt file; "
+                            "this adds a real one.")
+            add(_finish(fix, validate_llms_txt(text, origin), "" if soft_404 else (existing_llms or "")))
 
     # JSON-LD
     f = _finding(report, "json_ld")
@@ -98,6 +117,8 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
             snippet = json_ld_snippet(build_json_ld(origin, home))
         except NotEnoughContent:
             skipped.append(Skipped(FixKind.JSON_LD, "not enough content on the home page"))
+        except SecretInSiteText as e:
+            skipped.append(Skipped(FixKind.JSON_LD, f"contains a secret-like value ({e.label})"))
         else:
             patched = insert_before_head_close(home, snippet)
             if patched is None:
@@ -107,7 +128,7 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
                           "Add a schema.org WebSite JSON-LD snippet to the home page head, built from the home page "
                           "title and description.",
                           snippet, make_diff("index.html", home, patched), "json_ld")
-                add(_finish(fix, validate_json_ld_snippet(snippet)))
+                add(_finish(fix, validate_json_ld_snippet(snippet), home))
 
     # OpenAPI -> MCP stub
     found = baseline.spec()
@@ -119,6 +140,8 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
             source = build_mcp_stub(origin, spec)
         except NotEnoughContent:
             skipped.append(Skipped(FixKind.MCP_STUB, "the OpenAPI document has no GET operations"))
+        except SecretInSiteText as e:
+            skipped.append(Skipped(FixKind.MCP_STUB, f"contains a secret-like value ({e.label})"))
         else:
             fix = Fix("mcp_stub", FixKind.MCP_STUB, spec_path, "mcp_server_stub.py",
                       f"A read-only MCP tool stub for the GET operations in the OpenAPI document at {spec_path}.",
