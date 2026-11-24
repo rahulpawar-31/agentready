@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import sys
 import threading
 from collections import OrderedDict
 from dataclasses import asdict
@@ -17,6 +18,7 @@ from .fixes.propose import propose_fixes
 from .fixes.queue import FixQueue, InvalidTransition, NotApproved, UnknownFix, summary
 from .fixes.validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_stub
 from .fetch import CachedFetcher, GuardedFetcher, HttpxFetcher, default_resolver, is_public
+from .mcp_server import install_mcp, mcp_lifespan
 from .models import Report
 from .ownership import default_txt_lookup, make_token, verify_ownership
 
@@ -34,7 +36,9 @@ MAX_REPORTS = 200
 SNAPSHOT_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 _SNAPSHOT = re.compile(SNAPSHOT_PATTERN)
 
-app = FastAPI(title="AgentReady")
+# The MCP server (Plan 4) is built when the application starts and calls this module's route functions by name when
+# a tool runs.
+app = FastAPI(title="AgentReady", lifespan=mcp_lifespan(sys.modules[__name__]))
 _reports: "OrderedDict[str, Report]" = OrderedDict()
 _baselines: "dict[str, Baseline]" = {}                 # what each audit's snapshot saw; evicted with its report
 _proposals: "dict[str, tuple]" = {}                    # report id -> (FixQueue, skipped list); evicted with its report
@@ -146,9 +150,11 @@ def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(
 
 @app.get("/report/{rid}")
 def get_report(rid: str):
-    if rid not in _reports:
+    with _fix_lock:                                      # eviction (in post_audit) happens under the same lock
+        report = _reports.get(rid)
+    if report is None:
         raise HTTPException(404, "Unknown report")
-    return asdict(_reports[rid])
+    return asdict(report)
 
 
 # --- Fixes (Plan 3). Nothing here makes a request to the site or writes to it. ---------------------------------
@@ -249,3 +255,9 @@ def export_fix(rid: str, fid: str):
             raise HTTPException(409, str(e))
         return {"filename": bundle.filename, "content": bundle.content, "diff": bundle.diff,
                 "sha256": bundle.sha256, "note": bundle.note}
+
+
+# --- MCP (Plan 4): the same process, so agents and the owner see the same reports and fix queues. One route, added
+# after all the REST routes (not a mount: a mount at "/" swallowed their 405, 307 and JSON 404 answers). The endpoint
+# is exactly /mcp. There is no tool to approve or export a fix.
+install_mcp(app)
