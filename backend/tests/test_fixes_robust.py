@@ -65,12 +65,20 @@ def test_c1_a_crash_in_propose_becomes_three_generic_skips_and_retries_work(monk
     assert c.post(f"/report/{rid}/fixes").status_code == 200 and c.get(f"/report/{rid}/fixes").status_code == 200
 
 
-def test_c1_nested_anchors_do_not_make_proposal_quadratic():
-    html = HEAD + "<a href='/x'>link" * 20_000 + "</a>" * 20_000 + "</body></html>"
+def _propose_seconds(body: str):
+    html = HEAD + body + "</body></html>"
     started = time.perf_counter()
     p = propose_fixes(EMPTY, Baseline(O, {"/": (200, html)}))
-    assert time.perf_counter() - started < 3
+    return time.perf_counter() - started, p
+
+
+def test_c1_nested_anchors_cost_no_more_than_the_same_number_of_flat_ones():
+    """The work per link must not depend on how deeply it is nested (it did: 10 s versus under 1 s). Compared with
+    flat links of the same count, not against a fixed time, so a busy machine does not make it flaky."""
+    flat, _ = _propose_seconds("<a href='/x'>link</a>" * 20_000)
+    nested, p = _propose_seconds("<a href='/x'>link" * 20_000 + "</a>" * 20_000)
     assert [f.id for f in p.fixes] == ["llms_txt", "json_ld"]
+    assert nested < 4 * flat + 1.0, (flat, nested)
 
 
 @pytest.mark.parametrize("html", ["x" * 500_001, HEAD + "<p>" * 120_000])
