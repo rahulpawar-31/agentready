@@ -3,7 +3,9 @@
 The files in app/ui/ are read into memory when this module is imported (editing them needs a restart). Only files
 whose names match NAME_PATTERN are ever served under /ui/, from that in-memory table, so there is no path to look up on
 disk and nothing to traverse. REST responses are not touched: the headers below are sent by the UI routes only."""
+import os
 import re
+import stat
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -30,15 +32,38 @@ NOT_FOUND_BODY = b'{"detail":"Not Found"}'
 def _load() -> tuple[bytes, dict[str, tuple[bytes, str]]]:
     index = b""
     files: dict[str, tuple[bytes, str]] = {}
-    if not UI_DIR.is_dir():
+    if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
+            or os.open not in os.supports_dir_fd):
         return index, files
-    for path in sorted(UI_DIR.iterdir()):
-        if path.is_symlink() or not path.is_file():
-            continue
-        if path.name == "index.html":
-            index = path.read_bytes()
-        elif NAME_PATTERN.fullmatch(path.name):
-            files[path.name] = (path.read_bytes(), CONTENT_TYPES[path.suffix])
+    directory_fd = -1
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        directory_fd = os.open(UI_DIR, directory_flags)
+    except OSError:
+        return index, files
+    try:
+        for name in sorted(os.listdir(directory_fd)):
+            if name != "index.html" and not NAME_PATTERN.fullmatch(name):
+                continue
+            fd = -1
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    continue
+                with os.fdopen(fd, "rb") as asset:
+                    fd = -1
+                    body = asset.read()
+            except OSError:
+                continue
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+            if name == "index.html":
+                index = body
+            else:
+                files[name] = (body, CONTENT_TYPES[Path(name).suffix])
+    finally:
+        os.close(directory_fd)
     return index, files
 
 
