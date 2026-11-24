@@ -1,23 +1,30 @@
 # Benchmark evaluation report
 
 The task-runner CLI stores one immutable JSON file per site, task, repeat and snapshot under
-`benchmark/results/`. After recording the before and after runs, generate an evaluation summary from
-the committed site labels:
+`benchmark/results/`. After recording the before and after runs (the full procedure is in
+[benchmark.md](benchmark.md)), generate an evaluation summary from the committed site labels. Write the report
+**outside** `benchmark/results/`: the command refuses to write inside that tree, because a report saved there would be read
+back as a result on the next run.
 
 ```bash
 cd backend
 python -m app.runner.report --before before --after after
-python -m app.runner.report --before before --after after --format json --output ../benchmark/results/evaluation.json
+python -m app.runner.report --before before --after after --output ../benchmark/evaluation.md
+python -m app.runner.report --before before --after after --format json --output ../benchmark/evaluation.json
 ```
 
-The report shows task success rates and sample sizes for each snapshot, every valid failed task and
-its reason, invalid runs excluded from the denominator, and the per-site/task spread across repeats.
-It also reports a paired before/after change using only matching site, task and repeat records whose
-criteria, label and runner configuration match. Sites with before-only results remain visible in the
-snapshot summary but do not enter the paired comparison.
+The report shows task success rates and sample sizes for each snapshot, every valid failed task and its reason, invalid
+runs excluded from the denominator, the per-site and per-task spread across repeats, and the provenance found in the runs
+(criteria hash, harness hash, model, commit). It also reports a paired before/after change using only matching site, task and
+repeat records whose criteria, label and runner configuration match, with the counts of fail to pass, pass to fail, pass to
+pass and fail to fail. Sites with before-only results remain visible in the snapshot summary but do not enter the paired
+comparison. With fewer than 30 valid runs it says "Small sample: treat differences as indicative only", and it computes
+no statistical test.
 
-Results are summarized as recorded. The report never turns an invalid model or harness run into a task
-failure, overwrites run files, or claims the measurements generalize beyond the labelled sites.
+Results are summarized as recorded. The report never turns an invalid model or harness run into a task failure,
+overwrites run files, or claims the measurements generalize beyond the labelled sites. The OpenAPI-to-MCP stub is not
+counted in task success (FR-6.4). Text read from result files is clipped, stripped of control characters and made safe for
+Markdown before it is printed.
 
 ## Audit-check accuracy is separate
 
@@ -27,7 +34,11 @@ marks audit-check accuracy as **not measured**. To report per-check agreement an
 first preregister expected pass/fail labels for every audit check and save the corresponding audit
 findings for each site and snapshot. Do not infer those labels from task results.
 
+## What makes the command exit with a failure
+
 The command exits nonzero when it finds malformed valid or invalid result files, results without a
-corresponding site label, or duplicate valid runs. Missing repeats and missing snapshots are shown in
-the report as incomplete samples rather than silently treated as failures. It refuses to write over an
-existing run file, and refuses before/after names that resolve to the same snapshot directory.
+corresponding site label, duplicate valid runs, a run file whose recorded snapshot or task does not match the
+directory it sits in (a copied file), or more than one criteria hash, harness hash or model inside one snapshot. Missing
+repeats and missing snapshots are shown in the report as incomplete samples rather than silently treated as failures. It
+refuses to write over an existing run file, refuses to write anywhere inside the results directory or to a symlink, and
+refuses before/after names that are the same snapshot (also when they differ only by case).
