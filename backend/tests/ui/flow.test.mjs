@@ -304,3 +304,54 @@ test("the default downloader clicks a temporary link with a safe name and cleans
   assert.ok(!name.includes("/") && !name.startsWith(".") && name.endsWith("evil_name.txt"), name);
   assert.deepEqual(events, ["create", "revoke blob:x"]);
 });
+
+// ---------------------------------------------------------------- Group A: a body that cannot be drawn never wedges the page
+const THROWER = { toString() { throw new Error("cannot be turned into text"); } };
+const withReply = (srv, match, fn) => { const original = srv.fetch; srv.fetch = async (path, init) => (match(path, init) ? fn() : original(path, init)); return srv; };
+
+test("a report that cannot be drawn shows one fixed sentence, frees the button and leaves nothing half drawn", async () => {
+  const srv = withReply(server({ verified: true }), (p, i) => i.method === "POST" && p === "/audit", () => reply(200, { id: RID, ...REPORT, site: THROWER }));
+  const t = await boot({ server: srv });
+  await enter(t);
+  await click(t, "step-verify", "Verify and audit");
+  assert.ok(status(t.els).includes("Something went wrong on the server"), status(t.els));
+  assert.ok(!status(t.els).includes("Checking your site"));
+  assert.equal(button(t.els, "step-verify", "Verify and audit").hasAttribute("disabled"), false);
+  assert.ok(shown(t.els, "step-verify") && !shown(t.els, "step-report"));
+  assert.equal(t.els["step-report"].children.length, 0, "no half-drawn report");
+  assert.equal(t.storage.m.size, 0, "a report that was never shown is not remembered");
+});
+
+test("fixes that cannot be drawn leave the report in place, a fixed sentence and a free button", async () => {
+  const srv = withReply(server({ verified: true }), (p, i) => i.method === "POST" && p === `/report/${RID}/fixes`,
+    () => reply(200, { fixes: [mkFix("llms_txt")], skipped: [{ kind: "json_ld", reason: THROWER }] }));
+  const t = await boot({ server: srv });
+  await toReport(t);
+  await click(t, "step-report", "Propose fixes");
+  assert.ok(status(t.els).includes("Something went wrong on the server"), status(t.els));
+  assert.equal(button(t.els, "step-report", "Propose fixes").hasAttribute("disabled"), false);
+  assert.ok(shown(t.els, "step-report") && !shown(t.els, "step-fixes"));
+  assert.equal(t.els["step-fixes"].children.length, 0);
+});
+
+test("a restore that cannot be drawn leaves the address form usable and the page quiet about the rest", async () => {
+  const storage = memory();
+  storage.setItem("agentready.report", RID);
+  const srv = withReply(server({ verified: true }), (p, i) => i.method === "GET" && p === `/report/${RID}`, () => reply(200, { ...REPORT, site: THROWER }));
+  const t = await boot({ storage, server: srv });
+  assert.equal(byTag(t.els["step-url"], "input").length, 1, "the address form is there");
+  assert.ok(!shown(t.els, "step-report"));
+  assert.ok(status(t.els).includes("Something went wrong on the server"));
+});
+
+test("an unexpected failure inside a click handler frees the busy lock and shows one fixed sentence", async () => {
+  let broken = true;
+  const t = await boot({ serverOpts: { verified: true }, now: () => { if (broken) throw new Error("clock failure"); return new Date(Date.UTC(2026, 10, 24, 9, 5, 7)); } });
+  await toReport(t);
+  await click(t, "step-report", "Re-audit with fresh pages");           // snapshotName(now()) throws inside the task
+  assert.ok(status(t.els).includes("Something went wrong on the server"), status(t.els));
+  assert.equal(button(t.els, "step-report", "Re-audit with fresh pages").hasAttribute("disabled"), false);
+  broken = false;
+  await click(t, "step-report", "Propose fixes");                       // the busy lock was released
+  assert.ok(shown(t.els, "step-fixes"));
+});

@@ -246,12 +246,6 @@ test("diff lines keep their own +/- prefix and get a class that does not depend 
   assert.ok(pre.textContent.includes("+# Acme\n+> hi"));
 });
 
-test("very long diff lines are clipped for display", () => {
-  const node = renderFixes(doc, { fixes: [fix({ diff: "+" + "x".repeat(5000) + "\n" })], skipped: [] }, handlers());
-  const longest = Math.max(...byTag(node, "pre")[0].children.map((s) => s.textContent.length));
-  assert.ok(longest <= 402, String(longest));
-});
-
 test("excerpt diffs are labelled, and warnings, notes and paths are shown as text", () => {
   const node = renderFixes(doc, { fixes: [fix({ diff_kind: "excerpt", warning: "The existing page contains a secret-like value (jwt)", note: "an HTML page was found at /llms.txt" })], skipped: [] }, handlers());
   const text = allText(node);
@@ -282,4 +276,85 @@ test("hostile fix fields never become markup, and handlers get the id from the d
 test("a body with nothing in it still renders", () => {
   for (const body of [{ fixes: [], skipped: [] }, {}, null]) assert.doesNotThrow(() => renderFixes(doc, body, handlers()));
   assert.ok(allText(renderFixes(doc, { fixes: [], skipped: [] }, handlers())).includes("No fixes could be proposed"));
+});
+
+// ---------------------------------------------------------------- Group A: what the owner reviews
+const SENTENCE_TOO_BIG = "This fix is too large to review here. Reject it or review it through the API.";
+
+test("a long diff line is shown in full, so the owner reviews everything that would be exported", () => {
+  const line = "+TOOLS = json.loads('" + "x".repeat(3000) + "')";
+  const node = renderFixes(doc, { fixes: [fix({ diff: `--- /dev/null\n+++ b/stub.py\n${line}\n` })], skipped: [] }, handlers());
+  const shown = byTag(node, "pre")[0].children.map((s) => s.textContent);
+  assert.ok(shown.includes(line + "\n"), "the whole line is in the page");
+  assert.ok(!allText(node).includes("…"), "nothing was shortened");
+  assert.deepEqual(buttons(node).map((b) => b.textContent), ["Approve", "Reject"]);
+  assert.ok(!allText(node).includes(SENTENCE_TOO_BIG));
+});
+
+test("a diff over the line cap says how much is not shown and withholds Approve (Reject stays)", () => {
+  const lines = Array.from({ length: 5000 }, (_, i) => `+line ${i}`).join("\n");
+  const node = renderFixes(doc, { fixes: [fix({ diff: lines + "\n" })], skipped: [] }, handlers());
+  const text = allText(node);
+  assert.ok(text.includes("3000 more lines not shown"), "the marker names the number of lines");
+  assert.ok(text.includes(SENTENCE_TOO_BIG));
+  assert.deepEqual(buttons(node).map((b) => b.textContent), ["Reject"]);
+  assert.equal(byTag(node, "pre")[0].children.length, 2001);
+});
+
+test("exactly at the cap nothing is withheld", () => {
+  const lines = Array.from({ length: 2000 }, (_, i) => `+line ${i}`).join("\n");
+  const node = renderFixes(doc, { fixes: [fix({ diff: lines + "\n" })], skipped: [] }, handlers());
+  assert.deepEqual(buttons(node).map((b) => b.textContent), ["Approve", "Reject"]);
+  assert.ok(!allText(node).includes("not shown"));
+});
+
+test("a shortened description, path, warning or note is marked and withholds Approve", () => {
+  for (const field of ["description", "path", "warning", "note"]) {
+    const node = renderFixes(doc, { fixes: [fix({ [field]: "y".repeat(700) })], skipped: [] }, handlers());
+    const text = allText(node);
+    assert.match(text, /\d+ characters not shown/, field);
+    assert.ok(text.includes(SENTENCE_TOO_BIG), field);
+    assert.deepEqual(buttons(node).map((b) => b.textContent), ["Reject"], field);
+  }
+});
+
+test("an already approved fix that is too large keeps its Download, Copy and Revoke buttons", () => {
+  const node = renderFixes(doc, { fixes: [fix({ status: "approved", description: "y".repeat(700) })], skipped: [] }, handlers());
+  assert.deepEqual(buttons(node).map((b) => b.textContent), ["Download", "Copy", "Revoke approval"]);
+});
+
+test("prototype-named keys fall back to plain text instead of throwing", () => {
+  const names = ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf"];
+  const parsed = JSON.parse('{"__proto__": 5, "constructor": 6, "toString": 7, "discoverability": 40}');
+  const node = renderReport(doc, report({ category_scores: parsed, findings: names.flatMap((n) => [
+    finding({ check_id: n, category: n }), finding({ check_id: n, category: "safety", passed: true, status: "detected" })]) }),
+    { onPropose: noop, onReaudit: noop });
+  const text = allText(node);
+  for (const n of names) assert.ok(text.includes(n), n);
+  const fixes = renderFixes(doc, { fixes: names.map((n) => fix({ id: n, kind: n })), skipped: names.map((n) => ({ kind: n, reason: "r" })) }, handlers());
+  for (const n of names) assert.ok(allText(fixes).includes(n), n);
+});
+
+test("check ids, kinds and categories that are not strings are shown as clipped text, never looked up", () => {
+  const weird = [{}, [], ["llms_txt"], 5, null, { toString() { return "llms_txt"; } }];
+  for (const w of weird) {
+    assert.doesNotThrow(() => renderReport(doc, report({ findings: [finding({ check_id: w, category: w })] }), { onPropose: noop, onReaudit: noop }));
+    assert.doesNotThrow(() => renderFixes(doc, { fixes: [fix({ kind: w })], skipped: [{ kind: w, reason: w }] }, handlers()));
+  }
+});
+
+test("at most 500 findings are drawn, with a marker for the rest, and 100000 categories do not stall", () => {
+  const many = Array.from({ length: 100000 }, (_, i) => finding({ category: `cat-${i}`, check_id: `c${i}` }));
+  const started = Date.now();
+  const node = renderReport(doc, report({ findings: many }), { onPropose: noop, onReaudit: noop });
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+  assert.equal(findAll(node, (n) => n.tagName === "details" && cls(n).includes("finding")).length, 500);
+  assert.ok(allText(node).includes("99500 more findings are not shown here"));
+});
+
+test("at most 20 fixes are drawn, with a marker for the rest", () => {
+  const fixes = Array.from({ length: 30 }, (_, i) => fix({ id: `f${i}` }));
+  const node = renderFixes(doc, { fixes, skipped: [] }, handlers());
+  assert.equal(findAll(node, (n) => n.tagName === "section" && cls(n).includes("fix-card")).length, 20);
+  assert.ok(allText(node).includes("10 more fixes are not shown here"));
 });

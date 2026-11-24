@@ -79,7 +79,9 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
     busy = true;
     if (button) button.setAttribute("disabled", "");
     const promise = (async () => {
-      try { await task(); } finally { busy = false; if (button) button.removeAttribute("disabled"); }
+      try { await task(); }
+      catch { say(MSG.server); }                // whatever went wrong, the person gets one fixed sentence and a free button
+      finally { busy = false; if (button) button.removeAttribute("disabled"); }
     })();
     pending.add(promise);
     promise.finally(() => pending.delete(promise));
@@ -117,9 +119,10 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
   // ---- step 3
   function acceptReport(data) {
     const { id, ...report } = data;
+    const node = renderReport(document, report, { onPropose, onReaudit });     // drawn first: if it throws, nothing below happened
     store.saveReportId(id);
     store.set({ report, fixes: null, step: "report", site: report.site ?? store.get().site });
-    show(el.report, renderReport(document, report, { onPropose, onReaudit }));
+    show(el.report, node);
   }
 
   function onReaudit(button) {
@@ -135,9 +138,11 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
   }
 
   // ---- step 4
-  function showFixes() {
-    show(el.fixes, renderFixes(document, store.get().fixes, { onApprove: (id, b) => decide(id, b, "approve"), onReject: (id, b) => decide(id, b, "reject"),
-      onDownload: onDownload, onCopy: onCopy }));
+  function showFixes(data) {
+    const node = renderFixes(document, data, { onApprove: (id, b) => decide(id, b, "approve"), onReject: (id, b) => decide(id, b, "reject"),
+      onDownload: onDownload, onCopy: onCopy });                                // drawn first, then stored and swapped in
+    store.set({ fixes: data, step: "fixes" });
+    show(el.fixes, node);
   }
 
   function onPropose(button) {
@@ -147,8 +152,7 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
       say(MSG.proposing);
       const result = await api.proposeFixes(id);
       if (!result.ok) { say(failureMessage(result)); return; }
-      store.set({ fixes: result.data, step: "fixes" });
-      showFixes();
+      showFixes(result.data);
       say("");
       focus("fixes-heading");
     });
@@ -162,8 +166,7 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
       const result = await (action === "approve" ? api.approve(id, fixId) : api.reject(id, fixId));
       if (!result.ok) { say(failureMessage(result)); return; }
       const current = store.get().fixes ?? { fixes: [], skipped: [] };
-      store.set({ fixes: { ...current, fixes: current.fixes.map((f) => (f.id === fixId ? result.data : f)) } });
-      showFixes();
+      showFixes({ ...current, fixes: current.fixes.map((f) => (f.id === fixId ? result.data : f)) });
       say(action === "approve" ? MSG.approved : wasApproved ? MSG.revoked : MSG.rejected);
       focus("fixes-heading");
     });
@@ -207,11 +210,15 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
   const saved = store.loadReportId();
   if (saved) {
     const restore = (async () => {
-      const result = await api.report(saved);
-      if (!result.ok) { if (result.kind === "not_found") store.clearReportId(); return; }
-      acceptReport({ id: saved, ...result.data });
-      const fixes = await api.listFixes(saved);
-      if (fixes.ok) { store.set({ fixes: fixes.data, step: "fixes" }); showFixes(); }
+      try {
+        const result = await api.report(saved);
+        if (!result.ok) { if (result.kind === "not_found") store.clearReportId(); return; }
+        acceptReport({ id: saved, ...result.data });
+        const fixes = await api.listFixes(saved);
+        if (fixes.ok) showFixes(fixes.data);
+      } catch {
+        say(MSG.server);                         // the address form is already on the page and stays usable
+      }
     })();
     pending.add(restore);
     await restore;
@@ -222,5 +229,6 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   start({ document, fetch: (...args) => window.fetch(...args), storage: browserStorage(),
-    clipboard: (typeof navigator !== "undefined" && navigator.clipboard) || null, downloadBlob: makeDownloader(document, URL) });
+    clipboard: (typeof navigator !== "undefined" && navigator.clipboard) || null, downloadBlob: makeDownloader(document, URL) })
+    .catch(() => {});                            // the page is static HTML plus this script: a failure here must not become an unhandled error
 }
