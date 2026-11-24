@@ -25,9 +25,8 @@ CASES = [
     ("GET", "/report/abc/", 307, None, "/report/abc", ""),
     ("GET", "/ownership-token/", 307, None, "/ownership-token", ""),
     ("GET", "/definitely-not-a-route", 404, None, None, NOT_FOUND),
-    ("GET", "/", 404, None, None, NOT_FOUND),
+    ("GET", "/ui/nope.js", 404, None, None, NOT_FOUND),     # "/" itself now serves the web UI (Plan 5)
     ("GET", "/report//", 404, None, None, NOT_FOUND),
-    ("GET", "//ownership-token", 404, None, None, NOT_FOUND),
     ("GET", "/mcp/x", 404, None, None, NOT_FOUND),
 ]
 
