@@ -111,7 +111,7 @@ def test_reject_after_approve_blocks_export_and_reapprove_is_409(monkeypatch):
     assert c.post(f"/report/{rid}/fixes/llms_txt/reject").json()["status"] == "rejected"
     assert c.get(f"/report/{rid}/fixes/llms_txt/export").status_code == 409
     r = c.post(f"/report/{rid}/fixes/llms_txt/approve")
-    assert r.status_code == 409 and "propose again" in r.json()["detail"]
+    assert r.status_code == 409 and "new audit" in r.json()["detail"]
 
 
 def test_unknown_report_or_fix_is_404_and_get_before_post_is_404(monkeypatch):

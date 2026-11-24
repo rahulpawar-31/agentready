@@ -4,6 +4,7 @@ before it reaches an output."""
 import ast
 import json
 import re
+import unicodedata
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
@@ -12,19 +13,33 @@ from .models import (DESC_CLIP, FIELD_CLIP, LINK_TEXT_CLIP, LLMS_MAX_LINKS, MCP_
                      SecretInSiteText)
 from .secrets import find_secrets
 
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
 _SPACES = re.compile(r"\s+")
-_MARKUP = re.compile(r"[\[\]()<>]")
+_MARKUP = re.compile(r"[\[\]()<>`*_!~]")                     # could start a link, an image, emphasis, code or a tag
+# A bare web address or email in free text: Markdown renderers turn these into links, so they are not copied.
+_BARE_LINK = re.compile(r"(?i)\b(?:https?://|www\.)\S*|\b[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+")
+
+
+def _plain(text) -> str:
+    """Invisible and control characters out: format characters (zero-width, bidi, BOM) are removed, control
+    characters and every kind of space become one ordinary space."""
+    out = []
+    for ch in str(text or "")[:20_000]:
+        category = unicodedata.category(ch)
+        if category == "Cf":
+            continue
+        out.append(" " if category in ("Cc", "Zl", "Zp", "Zs") else ch)
+    return "".join(out)
 
 
 def _clean(text, limit: int) -> str:
-    """One line: control characters and runs of whitespace become single spaces, then clipped."""
-    return _SPACES.sub(" ", _CONTROL.sub(" ", str(text or ""))).strip()[:limit].strip()
+    """One line: invisible characters removed, runs of whitespace become single spaces, then clipped."""
+    return _SPACES.sub(" ", _plain(text)).strip()[:limit].strip()
 
 
 def _md_safe(text, limit: int) -> str:
-    """Also drops the characters that could start a Markdown link or an HTML tag."""
-    return _clean(_MARKUP.sub("", _clean(text, 10_000)), limit)
+    """For Markdown output: also drops bare links and emails and every character that could start a Markdown
+    link, image, emphasis, code span or HTML tag."""
+    return _clean(_MARKUP.sub("", _BARE_LINK.sub(" ", _clean(text, 10_000))), limit)
 
 
 def _guard(raw) -> None:
@@ -52,7 +67,11 @@ def _text(tag, limit: int) -> str:
 
 
 def _title(soup) -> str:
-    tag = soup.find("title")
+    """The page title: the <title> inside <head>, else the first <title> that is not inside an inline <svg>."""
+    head = soup.find("head")
+    tag = head.find("title") if head else None
+    if tag is None:
+        tag = next((t for t in soup.find_all("title", limit=20) if t.find_parent("svg") is None), None)
     return _text(tag, 1000) if tag else ""
 
 
@@ -64,14 +83,21 @@ def _description(soup) -> str:
     return ""
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def _site_link(origin: str, href: str):
-    """An absolute URL on the verified host without query or fragment, or None."""
+    """An absolute URL on the verified site (same scheme, host and port; an explicit default port counts as the
+    bare host) without query or fragment, or None. The link is built from the origin, never from the href."""
     try:
         base = urlsplit(origin)
         p = urlsplit(urljoin(origin + "/", href.strip()))
+        same = (p.scheme == base.scheme and p.scheme in _DEFAULT_PORTS and p.hostname is not None
+                and p.hostname == base.hostname
+                and (p.port or _DEFAULT_PORTS[p.scheme]) == (base.port or _DEFAULT_PORTS[base.scheme]))
+        if not same or p.username is not None or p.password is not None:
+            return None
     except ValueError:
-        return None
-    if p.scheme not in ("http", "https") or p.netloc.lower() != base.netloc.lower():
         return None
     path = quote(p.path or "/", safe="/%:@!$&'*+,;=-._~")        # no spaces or parentheses in a Markdown link
     return urlunsplit((base.scheme, base.netloc, path, "", ""))

@@ -16,7 +16,8 @@ _BAD_CHAR = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
 
 def _on_host(url: str, origin: str) -> bool:
     try:
-        return urlsplit(url).netloc.lower() == urlsplit(origin).netloc.lower() and urlsplit(url).scheme in ("http", "https")
+        got, want = urlsplit(url), urlsplit(origin)
+        return got.netloc.lower() == want.netloc.lower() and got.scheme == want.scheme and got.scheme in ("http", "https")
     except ValueError:
         return False
 
@@ -176,7 +177,7 @@ def validate_mcp_stub(source: str, spec: dict, origin: str) -> list[str]:
         problems.append("the stub must define exactly one no-redirect handler")
     problems += _inspect_stub_code(tree)
     base_url = [n.value.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
-                and len(n.targets) == 1 and getattr(n.targets[0], "id", "") == "BASE_URL"]
+                and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "BASE_URL"]
     if base_url != [origin]:
         problems.append("BASE_URL is not the verified origin")
     try:

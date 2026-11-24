@@ -25,7 +25,9 @@ def _sha(text: str) -> str:
 
 
 def summary(fix: Fix) -> dict:
-    """What a reviewer sees: the diff and the status, never a `content` field."""
+    """What a reviewer sees: the diff and the status, with no separate `content` field. For a new file the diff
+    already shows the whole file (review needs that); the export is the download or copy action, and it is the part
+    that is only possible after approval."""
     return {"id": fix.id, "kind": fix.kind.value, "path": fix.path, "filename": fix.filename,
             "description": fix.description, "finding_id": fix.finding_id, "status": fix.status.value,
             "diff": fix.diff, "diff_kind": fix.diff_kind, "warning": fix.warning, "note": fix.note,
@@ -55,7 +57,7 @@ class FixQueue:
         if fix.status is FixStatus.APPROVED:
             return fix
         if fix.status is FixStatus.REJECTED:
-            raise InvalidTransition("a rejected fix cannot be approved; propose again")
+            raise InvalidTransition("a rejected fix cannot be approved again; the only way back is a new audit")
         fix.status = FixStatus.APPROVED
         fix.approved_sha256 = _sha(fix.content)
         return fix
