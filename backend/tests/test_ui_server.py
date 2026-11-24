@@ -93,3 +93,44 @@ def test_only_get_is_served_on_ui_routes(client):
 def test_the_ui_routes_are_not_listed_in_the_openapi_document(client):
     paths = client.get("/openapi.json").json()["paths"]
     assert "/" not in paths and not any(p.startswith("/ui") for p in paths)
+
+
+# ---------------------------------------------------------------- Group D: more headers, and HEAD
+PERMISSIONS = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+
+
+@pytest.mark.parametrize("path", ["/", "/ui/app.js", "/ui/app.css"])
+def test_the_ui_also_sends_isolation_and_permission_headers_with_exact_values(client, path):
+    r = client.get(path)
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+    assert r.headers["cross-origin-resource-policy"] == "same-origin"
+    assert r.headers["permissions-policy"] == PERMISSIONS
+
+
+def test_rest_responses_carry_none_of_the_ui_only_headers(client):
+    for r in (client.get("/ownership-token", params={"domain": "x.test"}), client.get("/definitely-not-a-route"), client.get("/audit"),
+              client.get("/openapi.json")):
+        for header in ("cross-origin-opener-policy", "cross-origin-resource-policy", "permissions-policy", "content-security-policy"):
+            assert header not in r.headers, (r.request.url.path, header)
+
+
+@pytest.mark.parametrize("path", ["/", "/ui/app.js", "/ui/app.css"])
+def test_head_returns_the_same_headers_as_get_and_no_body(client, path):
+    got, head = client.get(path), client.head(path)
+    assert head.status_code == 200 and head.content == b""
+    for name in ("content-type", "content-security-policy", "x-content-type-options", "referrer-policy", "cache-control",
+                 "cross-origin-opener-policy", "cross-origin-resource-policy", "permissions-policy"):
+        assert head.headers[name] == got.headers[name], name
+    assert head.headers["content-length"] == str(len(got.content))
+
+
+@pytest.mark.parametrize("path", ["/ui/nope.js", "/ui/index.html", "/ui/%2e%2e/main.py", "/ui/APP.JS", "/ui/"])
+def test_head_on_anything_that_is_not_a_listed_file_is_a_404_without_ui_headers(client, path):
+    r = client.head(path)
+    assert r.status_code == 404 and r.content == b"", path
+    assert "content-security-policy" not in r.headers
+
+
+def test_other_methods_on_ui_routes_still_say_which_methods_are_allowed(client):
+    r = client.post("/")
+    assert r.status_code == 405 and set(r.headers["allow"].replace(" ", "").split(",")) == {"GET", "HEAD"}

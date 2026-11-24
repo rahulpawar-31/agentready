@@ -2,7 +2,7 @@
 // site text never turns into markup by looking at serialize().
 let ACTIVE = null;
 
-class Node {
+export class Node {
   constructor(nodeType, doc) {
     this.nodeType = nodeType;
     this.ownerDocument = doc;
@@ -51,7 +51,7 @@ export class Element extends Node {
 }
 
 export function createFakeDocument() {
-  const doc = { _ids: new Map(), activeElement: null };
+  const doc = { _ids: new Map(), activeElement: null, Node };
   doc.createElement = (tag) => new Element(doc, tag);
   doc.createTextNode = (s) => new TextNode(doc, s);
   doc.getElementById = (id) => doc._ids.get(id) ?? null;

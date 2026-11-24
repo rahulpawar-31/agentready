@@ -33,7 +33,7 @@ test("filenames are made safe", () => {
   assert.equal(sanitizeFilename("llms.txt"), "llms.txt");
   assert.equal(sanitizeFilename("a".repeat(200)).length, 64);
   assert.equal(sanitizeFilename("mcp server stub.py"), "mcp_server_stub.py");
-  assert.ok(!sanitizeFilename("a‮b\x00c").match(/[^A-Za-z0-9._-]/));
+  assert.ok(!sanitizeFilename("a\u202eb\x00c").match(/[^A-Za-z0-9._-]/));
 });
 
 test("snapshot names match the server pattern", () => {
@@ -65,4 +65,35 @@ test("clipText clips and marks", () => {
   assert.equal(clipText("abc", 3), "abc");
   assert.equal(clipText(undefined, 3), "");
   assert.equal(clipText({ toString() { return "xy"; } }, 5), "xy");
+});
+
+// ---------------------------------------------------------------- Group D
+import { displayText } from "../../app/ui/format.js";
+
+test("displayText removes bidi controls, zero-width characters, byte order marks and line separators", () => {
+  const raw = "a\u202eb\u2066c\u200bd\u200de\ufeff" + "f\u2028g\u2029h\u0085i\u00adj";
+  assert.equal(displayText(raw), "abcdefghij");
+  assert.equal(displayText("https://x.test/\u202etxt.exe"), "https://x.test/txt.exe");
+});
+
+test("displayText turns unusual spaces into a plain space and keeps ordinary text", () => {
+  assert.equal(displayText("a b c　d"), "a b c d");
+  assert.equal(displayText("Plain text, with ünïcode and 日本語 and a plain space"), "Plain text, with ünïcode and 日本語 and a plain space");
+  assert.equal(displayText("line one\nline two"), "line one\nline two");
+});
+
+test("displayText clips after cleaning and handles every kind of value", () => {
+  assert.equal(displayText("a\u200b".repeat(500), 10), "a".repeat(10) + "…");
+  assert.equal(displayText(null), "");
+  assert.equal(displayText(undefined, 5), "");
+  assert.equal(displayText(42), "42");
+  assert.equal(displayText({ toString() { return "x\u202ey"; } }), "xy");
+});
+
+test("diffText shows invisible characters as visible markers instead of dropping them", async () => {
+  const { diffText } = await import("../../app/ui/format.js");
+  assert.equal(diffText("+a\u202eb"), "+a⟦U+202E⟧b");
+  assert.equal(diffText(" x\u200by\ufeff"), " x⟦U+200B⟧y⟦U+FEFF⟧");
+  assert.equal(diffText("-a\u2028b"), "-a⟦U+2028⟧b");
+  assert.equal(diffText("+plain line with tabs\tand text"), "+plain line with tabs\tand text");
 });

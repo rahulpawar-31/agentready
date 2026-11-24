@@ -2,7 +2,7 @@
 // that came from the audited site or from the API is placed as text (see dom.js); class names come only from the fixed
 // tables below; site-derived addresses are shown as text and are never links.
 import { makeDom } from "./dom.js";
-import { band, clipText, confidenceLabel, statusLabel } from "./format.js";
+import { band, confidenceLabel, diffText, displayText, statusLabel } from "./format.js";
 
 const KIND_TITLES = { llms_txt: "llms.txt", json_ld: "JSON-LD snippet", mcp_stub: "MCP stub (Python)" };
 const CHECK_TITLES = {
@@ -49,13 +49,13 @@ export function renderFixes(document, body, handlers = {}) {
   for (const fix of fixes.slice(0, MAX_FIXES)) children.push(fixCard(fix));
   if (fixes.length > MAX_FIXES) children.push(h("p", { class: "muted" }, moreMarker(fixes.length - MAX_FIXES, "fix", "fixes")));
   if (skipped.length > 0) {
-    const items = skipped.slice(0, MAX_SKIPPED).map((s) => h("li", {}, h("strong", {}, kindTitle(s.kind)), " — ", clipText(s.reason, CLIP.reason)));
+    const items = skipped.slice(0, MAX_SKIPPED).map((s) => h("li", {}, h("strong", {}, kindTitle(s.kind)), " — ", displayText(s.reason, CLIP.reason)));
     if (skipped.length > MAX_SKIPPED) items.push(h("li", { class: "muted" }, moreMarker(skipped.length - MAX_SKIPPED, "entry", "entries")));
     children.push(h("details", { class: "skipped" }, h("summary", {}, "Not proposed"), h("ul", {}, items)));
   }
   return h("div", { class: "card" }, children);
 
-  function kindTitle(kind) { return own(KIND_TITLES, kind) ?? clipText(kind, CLIP.name); }
+  function kindTitle(kind) { return own(KIND_TITLES, kind) ?? displayText(kind, CLIP.name); }
 
   function button(label, kind, onClick, id) {
     const b = h("button", { type: "button", class: `btn btn-${kind}` }, label);
@@ -70,7 +70,7 @@ export function renderFixes(document, body, handlers = {}) {
     // a review of everything that would be exported.
     let shortened = false;
     const fit = (value, n) => {
-      const s = value === null || value === undefined ? "" : String(value);
+      const s = displayText(value);
       if (s.length <= n) return [s];
       shortened = true;
       return [s.slice(0, n), h("span", { class: "muted" }, ` … ${s.length - n} characters not shown`)];
@@ -105,7 +105,7 @@ export function renderFixes(document, body, handlers = {}) {
     const lines = typeof fix.diff === "string" ? fix.diff.split("\n") : [];
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     // Lines are never shortened: the box scrolls sideways, so every character that would be exported can be read.
-    const shown = lines.slice(0, MAX_DIFF_LINES).map((line) => h("span", { class: `diff-line ${diffClass(line)}` }, line + "\n"));
+    const shown = lines.slice(0, MAX_DIFF_LINES).map((line) => h("span", { class: `diff-line ${diffClass(line)}` }, diffText(line) + "\n"));
     const cut = lines.length > MAX_DIFF_LINES;
     if (cut) shown.push(h("span", { class: "diff-line diff-meta" }, `… ${lines.length - MAX_DIFF_LINES} more lines not shown\n`));
     return { node: h("pre", { class: "diff", tabindex: "0", role: "region", "aria-label": label }, shown), shortened: cut };
@@ -135,7 +135,7 @@ export function renderUrlForm(document, { onSubmit, value } = {}) {
 export function renderInstructions(document, instructions, { onVerify } = {}) {
   const { h } = makeDom(document);
   const i = isObject(instructions) ? instructions : {};
-  const text = (v, n = CLIP.path) => clipText(v, n);
+  const text = (v, n = CLIP.path) => displayText(v, n);
   const dns = i.dns_txt_name
     ? [h("p", {}, h("strong", {}, "Option B: add a DNS TXT record")),
        h("p", { class: "muted" }, "Name"), h("pre", { class: "snippet" }, h("code", {}, text(i.dns_txt_name))),
@@ -162,7 +162,7 @@ export function renderReport(document, report, handlers = {}) {
   const unscored = Number.isFinite(r.unscored) ? Math.max(0, Math.floor(r.unscored)) : 0;
 
   const children = [h("h2", { id: "report-heading", tabindex: "-1" }, "3. Score and evidence"),
-    h("p", { class: "muted" }, "Site: ", h("code", {}, clipText(r.site, CLIP.url))), scoreBlock()];
+    h("p", { class: "muted" }, "Site: ", h("code", {}, displayText(r.site, CLIP.url))), scoreBlock()];
   if (unscored > 0) {
     children.push(h("p", { class: "muted" }, unscored === 1
       ? "1 check could not be reached and is not in the score."
@@ -205,7 +205,7 @@ export function renderReport(document, report, handlers = {}) {
     return items;
   }
 
-  function categoryTitle(name) { return own(CATEGORY_TITLES, name) ?? clipText(name, CLIP.name); }
+  function categoryTitle(name) { return own(CATEGORY_TITLES, name) ?? displayText(name, CLIP.name); }
 
   function categorySections() {
     // One pass over at most MAX_FINDINGS findings: each goes straight into the group of its category.
@@ -231,7 +231,7 @@ export function renderReport(document, report, handlers = {}) {
 
   function findingRow(f) {
     const status = statusLabel(f.status);
-    const title = own(CHECK_TITLES, f.check_id) ?? clipText(f.check_id, CLIP.name);
+    const title = own(CHECK_TITLES, f.check_id) ?? displayText(f.check_id, CLIP.name);
     return h("details", { class: "finding" },
       h("summary", {}, h("span", { class: "finding-title" }, title),
         h("span", { class: `chip ${STATUS_CLASS[status]}` }, status),
@@ -239,9 +239,9 @@ export function renderReport(document, report, handlers = {}) {
         // a visible cue that does not depend on the browser's own disclosure marker (flex layout can remove it)
         h("span", { class: "finding-toggle" }, h("span", { class: "toggle-closed" }, "Show evidence"), h("span", { class: "toggle-open" }, "Hide evidence"))),
       h("div", { class: "finding-body" },
-        h("p", {}, h("strong", {}, "What was checked: "), clipText(f.check, CLIP.check)),
-        h("p", {}, h("strong", {}, "What was observed: "), clipText(f.evidence, CLIP.evidence)),
-        h("p", {}, h("strong", {}, "Where: "), h("code", {}, clipText(f.url, CLIP.url)))));
+        h("p", {}, h("strong", {}, "What was checked: "), displayText(f.check, CLIP.check)),
+        h("p", {}, h("strong", {}, "What was observed: "), displayText(f.evidence, CLIP.evidence)),
+        h("p", {}, h("strong", {}, "Where: "), h("code", {}, displayText(f.url, CLIP.url)))));
   }
 }
 

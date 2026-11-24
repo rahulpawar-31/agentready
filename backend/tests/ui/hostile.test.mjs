@@ -12,7 +12,7 @@ const SECTIONS = ["step-url", "step-verify", "step-report", "step-fixes"];
 const CSS = fs.readFileSync(new URL("../../app/ui/app.css", import.meta.url), "utf8");
 const CSS_CLASSES = new Set([...CSS.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]));
 const STRINGS = ["<img src=x onerror=alert(1)>", "\"><script>alert(1)</script>", "javascript:alert(1)", "</pre><b>x</b>", "<!--", "]]>",
-  "‮⁦abc", "a​b", "x\u0000y", "a\nb\rc d e", "diff-add chip chip-detected", "' onmouseover='x", "__proto__",
+  "\u202e\u2066abc", "a\u200bb", "x\u0000y", "a\nb\rc\u2028d\u2029e", "diff-add chip chip-detected", "' onmouseover='x", "__proto__",
   "constructor", "toString", "hasOwnProperty", "valueOf", "x".repeat(20000), "", " ", "{{7*7}}", "${7*7}", "%s%n"];
 const OTHER = [null, undefined, 0, -1, NaN, Infinity, 1e308, true, false, {}, [], [1, 2], { toString() { return "TS"; } }, { a: { b: 1 } },
   "5", [[[]]], { toString() { throw new Error("no text"); } }];

@@ -3,7 +3,7 @@
 // fixed sentences (the server's short `detail` string is passed through, clipped, only for `invalid` and `conflict`);
 // response bodies and exception text are never shown. A 403 means "control not proven" only on the audit route; on
 // any other route it is `forbidden`, so the verification steps are never shown for something they cannot fix.
-import { clipText } from "./format.js";
+import { displayText } from "./format.js";
 
 const REPORT_ID = /^[0-9a-f]{32}$/;
 const FIX_ID = /^[a-z_]{1,32}$/;
@@ -57,9 +57,9 @@ export function createApi(fetchImpl, { timeoutMs = 60000 } = {}) {
     if (status === 403) {
       return audit ? failure("unverified", 403, MESSAGES.unverified, { instructions: isObject(detail) ? detail : null }) : failure("forbidden", 403);
     }
-    if (status === 422) return failure("invalid", 422, typeof detail === "string" ? clipText(detail, 200) : MESSAGES.invalid);
+    if (status === 422) return failure("invalid", 422, typeof detail === "string" ? displayText(detail, 200) : MESSAGES.invalid);
     if (status === 409) {
-      const reason = typeof detail === "string" ? clipText(detail, 200) : null;
+      const reason = typeof detail === "string" ? displayText(detail, 200) : null;
       return failure("conflict", 409, reason ?? MESSAGES.conflict, { detail: reason });
     }
     if (status === 404) return failure("not_found", 404);

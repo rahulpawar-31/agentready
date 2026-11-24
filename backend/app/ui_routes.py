@@ -6,7 +6,7 @@ disk and nothing to traverse. REST responses are not touched: the headers below 
 import re
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
 UI_DIR = Path(__file__).parent / "ui"
@@ -20,7 +20,11 @@ UI_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
 }
+NOT_FOUND_BODY = b'{"detail":"Not Found"}'
 
 
 def _load() -> tuple[bytes, dict[str, tuple[bytes, str]]]:
@@ -48,20 +52,31 @@ def lookup(name: str) -> tuple[bytes, str] | None:
     return UI_FILES.get(name)
 
 
-def _response(body: bytes, content_type: str) -> Response:
-    return Response(content=body, headers={**UI_HEADERS, "Content-Type": content_type})
+def _response(body: bytes, content_type: str, head: bool = False) -> Response:
+    """The page or asset. For HEAD the headers are those of GET (including its Content-Length) and the body is empty."""
+    headers = {**UI_HEADERS, "Content-Type": content_type}
+    if head:
+        return Response(content=b"", headers={**headers, "Content-Length": str(len(body))})
+    return Response(content=body, headers=headers)
+
+
+def _not_found(head: bool):
+    if head:                                    # the same JSON 404 as any unknown path, without a body
+        return Response(content=b"", status_code=404, media_type="application/json", headers={"Content-Length": str(len(NOT_FOUND_BODY))})
+    raise HTTPException(404, "Not Found")
 
 
 def install_ui(app: FastAPI) -> None:
-    """Register GET / and GET /ui/{name}. Neither route appears in the OpenAPI document."""
+    """Register GET and HEAD for / and /ui/{name}. Neither route appears in the OpenAPI document."""
 
-    @app.get("/", include_in_schema=False)
-    def ui_index():
-        return _response(INDEX_HTML, HTML_TYPE)
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    def ui_index(request: Request):
+        return _response(INDEX_HTML, HTML_TYPE, head=request.method == "HEAD")
 
-    @app.get("/ui/{name}", include_in_schema=False)
-    def ui_asset(name: str):
+    @app.api_route("/ui/{name}", methods=["GET", "HEAD"], include_in_schema=False)
+    def ui_asset(name: str, request: Request):
+        head = request.method == "HEAD"
         found = lookup(name)
         if found is None:
-            raise HTTPException(404, "Not Found")
-        return _response(*found)
+            return _not_found(head)
+        return _response(*found, head=head)

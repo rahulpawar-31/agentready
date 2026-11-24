@@ -374,3 +374,28 @@ test("every finding row carries visible 'Show evidence' and 'Hide evidence' text
     assert.equal(open[0].textContent, "Hide evidence");
   }
 });
+
+// ---------------------------------------------------------------- Group D: invisible characters
+test("bidi and zero-width characters never reach the page in finding text, and a url cannot be visually reordered", () => {
+  const evil = "https://x.test/\u202etxt.exe\u200b";
+  const node = renderReport(doc, report({ site: evil, findings: [finding({ url: evil, evidence: "a\u2066b\u200bc", check: "x\u202ey" })] }), { onPropose: noop, onReaudit: noop });
+  const text = allText(node);
+  assert.ok(!/[\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff\u2028\u2029]/.test(text), "no invisible control character in the page");
+  assert.ok(text.includes("https://x.test/txt.exe"));
+});
+
+test("a diff shows every invisible character as a visible marker, so the review sees exactly what would be exported", () => {
+  const diff = "--- /dev/null\n+++ b/llms.txt\n+# Acme\u202e\n+> a\u200bb\n context\u2028line\n";
+  const node = renderFixes(doc, { fixes: [fix({ diff })], skipped: [] }, handlers());
+  const shown = byTag(node, "pre")[0].textContent;
+  assert.ok(!/[\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff\u2028\u2029]/.test(shown));
+  assert.ok(shown.includes("+# Acme⟦U+202E⟧") && shown.includes("+> a⟦U+200B⟧b") && shown.includes("⟦U+2028⟧"));
+});
+
+test("fix text fields lose invisible characters too, and shortening is judged on the cleaned text", () => {
+  const node = renderFixes(doc, { fixes: [fix({ description: "Adds\u202e a summary\u200b.", warning: "w\u2066x", path: "/a\u200b.txt", note: "n\u202ed" })], skipped: [{ kind: "mcp_stub", reason: "r\u202ex" }] }, handlers());
+  const text = allText(node);
+  assert.ok(!/[\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/.test(text));
+  assert.ok(text.includes("Adds a summary."));
+  assert.deepEqual(buttons(node).map((b) => b.textContent), ["Approve", "Reject"], "nothing counted as not shown");
+});

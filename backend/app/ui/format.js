@@ -32,6 +32,26 @@ export function clipText(value, n) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
+// Invisible and direction-changing characters (category Cf: bidi controls, zero-width characters, byte order marks, soft
+// hyphens), line and paragraph separators and U+0085. They can visually reorder or hide text in an address or a sentence.
+const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}\u0085]/gu;
+const ODD_SPACE = /(?! )\p{Zs}/gu;                 // any space separator except the plain space
+
+// Text from the audited site, made safe to show: invisible characters are dropped, odd spaces become a plain space,
+// then the result is clipped to n characters.
+export function displayText(value, n = Infinity) {
+  const s = value === null || value === undefined ? "" : String(value);
+  return clipText(s.replace(INVISIBLE, "").replace(ODD_SPACE, " "), n);
+}
+
+const marker = (ch) => `\u27e6U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}\u27e7`;
+
+// A diff line for review: nothing is dropped, so what is shown is what would be exported, but each invisible character
+// is shown as a visible marker such as ⟦U+202E⟧.
+export function diffText(line) {
+  return String(line).replace(INVISIBLE, marker).replace(ODD_SPACE, marker);
+}
+
 const HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::(\d{1,5}))?$/;
 
 function parseInput(input) {

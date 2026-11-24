@@ -1,5 +1,5 @@
 // The only way the page makes elements. Text from the audited site is always a text node (never parsed), tags and
-// attributes come from closed lists, and links can only point at fixed places inside this page or this app.
+// attributes come from closed lists, and a link can only point at an anchor inside this page (no view needs more).
 const TAGS = new Set(["div", "span", "p", "h1", "h2", "h3", "ul", "li", "a", "button", "input", "label", "details",
   "summary", "pre", "code", "section", "header", "main", "footer", "form", "strong", "small", "table", "thead", "tbody",
   "tr", "th", "td", "progress"]);
@@ -7,16 +7,17 @@ const ATTRS = new Set(["class", "id", "type", "disabled", "hidden", "role", "for
   "autocomplete", "spellcheck", "rel", "href", "download", "title", "max", "tabindex"]);
 const PREFIXED = /^(aria|data)-[a-z0-9]+(-[a-z0-9]+)*$/;
 const IN_PAGE = /^#[A-Za-z0-9_-]+$/;
-const IN_APP = /^\/(?!\/)[A-Za-z0-9._~/-]*$/;
 
 export function safeHref(value) {
-  if (typeof value !== "string") return null;
-  if (IN_PAGE.test(value)) return value;
-  if (IN_APP.test(value) && !value.includes("..") && !value.includes("//")) return value;
-  return null;
+  return typeof value === "string" && IN_PAGE.test(value) ? value : null;
 }
 
 export function makeDom(document) {
+  // A child must be a real node of this page: an instance of the DOM's own Node class (the document's, or the global
+  // one in a browser). Look-alike objects with a nodeType are refused. Only where no Node class exists at all (a bare
+  // test environment) does the check fall back to nodeType.
+  const NodeClass = document?.Node ?? globalThis.Node;
+  const isNode = (c) => (c.nodeType === 1 || c.nodeType === 3) && (typeof NodeClass !== "function" || c instanceof NodeClass);
   const text = (value) => document.createTextNode(String(value));
 
   function clear(node) {
@@ -27,7 +28,7 @@ export function makeDom(document) {
     if (child === null || child === undefined || child === false || child === true) return;
     if (Array.isArray(child)) { child.forEach((c) => add(parent, c)); return; }
     if (typeof child === "string" || typeof child === "number") { parent.appendChild(text(child)); return; }
-    if (typeof child === "object" && (child.nodeType === 1 || child.nodeType === 3)) { parent.appendChild(child); return; }
+    if (typeof child === "object" && isNode(child)) { parent.appendChild(child); return; }
     throw new TypeError("child not allowed");
   }
 

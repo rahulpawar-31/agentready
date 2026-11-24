@@ -29,17 +29,6 @@ test("dangerous attributes are refused", () => {
   assert.throws(() => h("div", { onclick: null }), /attribute not allowed/);
 });
 
-test("href accepts only fixed in-app destinations", () => {
-  assert.equal(safeHref("#step-2"), "#step-2");
-  assert.equal(safeHref("/ui/app.css"), "/ui/app.css");
-  assert.equal(safeHref("/"), "/");
-  const bad = ["javascript:alert(1)", "https://evil.test/", "//evil.test/", "/a//b", "/../x", "/a/..", "data:text/html,x", " /x",
-               "/x?y=1", "/x#y", "", "#", "#a b", null, undefined, 5, "/x\n", "/x\\y", "/%2e%2e/x", "HTTP://x", "/a:b"];
-  for (const b of bad) assert.equal(safeHref(b), null, String(b));
-  assert.throws(() => h("a", { href: "https://evil.test/" }, "x"), /href/);
-  assert.equal(serialize(h("a", { href: "#step-1" }, "go")), '<a href="#step-1">go</a>');
-});
-
 test("boolean and null attributes, aria and data attributes, nested children", () => {
   const b = h("button", { disabled: true, hidden: false, "aria-label": "Go", "data-x": "1", title: null }, ["a", null, ["b", 3]]);
   assert.equal(serialize(b), '<button disabled="" aria-label="Go" data-x="1">ab3</button>');
@@ -61,4 +50,21 @@ test("a real node passes through and text() and clear() work", () => {
 test("attribute values from data are set as plain strings", () => {
   const n = h("div", { "data-fix": '"><script>alert(1)</script>' }, "x");
   assert.equal(serialize(n), '<div data-fix="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;">x</div>');
+});
+
+// ---------------------------------------------------------------- Group D
+test("only real nodes of this document family are accepted as children, never look-alike objects", () => {
+  for (const fake of [{ nodeType: 1 }, { nodeType: 3, data: "x" }, { nodeType: 1, tagName: "script", children: [] }, Object.create(null, { nodeType: { value: 1 } })]) {
+    assert.throws(() => h("div", {}, fake), /child not allowed/);
+  }
+  assert.doesNotThrow(() => h("div", {}, h("span", {}, "ok"), text("t")));
+});
+
+test("href accepts only an in-page anchor, because no view links anywhere else", () => {
+  assert.equal(safeHref("#step-2"), "#step-2");
+  for (const bad of ["/", "/ui/app.css", "/report/abc", "/x?y=1", "https://evil.test/", "//evil.test/", "javascript:alert(1)", "#", "#a b", "#a/b", "", null, 5, " #x", "#x\n"]) {
+    assert.equal(safeHref(bad), null, String(bad));
+  }
+  assert.throws(() => h("a", { href: "/ui/app.css" }, "x"), /href/);
+  assert.equal(serialize(h("a", { href: "#step-1" }, "go")), '<a href="#step-1">go</a>');
 });
