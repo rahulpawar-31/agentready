@@ -100,7 +100,7 @@ def test_changed_preregistered_label_excludes_audit_result_and_reports_problem(t
     assert any("label changed" in problem for problem in report["problems"])
 
 
-def test_task_run_with_a_changed_label_hash_is_excluded(tmp_path):
+def test_task_run_with_a_changed_label_hash_is_flagged_and_never_paired(tmp_path):
     label = make_label(tmp_path / "labels")
     result_dir = tmp_path / "results" / "before" / "x.test"
     result_dir.mkdir(parents=True)
@@ -109,8 +109,10 @@ def test_task_run_with_a_changed_label_hash_is_excluded(tmp_path):
            "config": {"label_sha256": "old-label-hash"}}
     (result_dir / "main_info-1.json").write_text(json.dumps(row))
     report = build_report(tmp_path / "results", tmp_path / "labels", "before", "after")
-    assert report["before"]["valid_runs"] == 0
-    assert any("label changed" in problem for problem in report["problems"])
+    # The detailed report retains the original run in the recorded snapshot totals, but marks it
+    # flawed so it cannot contribute to the paired before/after estimate.
+    assert report["before"]["valid_runs"] == 1
+    assert any("label hash" in problem for problem in report["problems"]), report["problems"]
 
 
 def test_audit_snapshot_save_is_immutable(tmp_path):
