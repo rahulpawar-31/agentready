@@ -73,9 +73,3 @@ def test_decorate_labels_and_clips_without_mutating_the_input():
     assert out["fixes"][1]["diff"] == "short" and "diff_truncated" not in out["fixes"][1]
     assert len(src["findings"][0]["evidence"]) == 2000 and "diff_truncated" not in src["fixes"][0]
     assert "untrusted_content_notice" not in src
-
-
-def test_stub_tools_fail_with_a_fixed_error_until_implemented(server):
-    # Task 1 only: the tools exist and answer with a fixed, JSON error (replaced in Tasks 2 and 3).
-    from tests.mcp_helpers import call, error_json
-    assert error_json(call(server, "get_report", {"report_id": "0" * 32}))["error"]

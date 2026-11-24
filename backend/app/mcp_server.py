@@ -107,6 +107,12 @@ def dep(core, fn):
     return core.app.dependency_overrides.get(fn, fn)()
 
 
+def _check_report_id(report_id: str) -> str:
+    if not isinstance(report_id, str) or not REPORT_ID.match(report_id):
+        raise tool_error("invalid_request", message="report_id must be the 32-character id that audit_site returned")
+    return report_id
+
+
 async def _in_thread(label: str, fn):
     """Run a blocking route function off the event loop and turn every failure into a fixed tool error: the
     exception text of an unexpected failure stays in the server and is never sent to the client."""
@@ -143,12 +149,16 @@ def build_server(core) -> MCPServer:
     @server.tool(name="get_report", description=GET_REPORT_DESCRIPTION,
                  annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False))
     async def get_report(report_id: str) -> dict:
-        raise tool_error("failed", message=GENERIC_FAILURE)
+        rid = _check_report_id(report_id)
+        report = await _in_thread("get_report", lambda: core.get_report(rid))
+        return decorate({"report_id": rid, **report})
 
     @server.tool(name="propose_fixes", description=PROPOSE_DESCRIPTION,
                  annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False,
                                              idempotent_hint=True, open_world_hint=False))
     async def propose_fixes(report_id: str) -> dict:
-        raise tool_error("failed", message=GENERIC_FAILURE)
+        rid = _check_report_id(report_id)
+        body = await _in_thread("propose_fixes", lambda: core.post_fixes(rid))
+        return decorate({"report_id": rid, **body, "approval": APPROVAL_NOTE})
 
     return server

@@ -1,9 +1,11 @@
+import json
+
 import pytest
 
 from app import main
 from app.mcp_server import UNTRUSTED_NOTICE, build_server
 from tests.conftest import page
-from tests.mcp_helpers import B, call, error_json, pages_for, result_json, setup_site, site_html
+from tests.mcp_helpers import B, call, error_json, pages_for, result_json, setup_site, site_html, walk_keys
 
 
 @pytest.fixture(autouse=True)
@@ -104,3 +106,121 @@ def test_a_failing_baseline_does_not_lose_the_report_through_mcp(monkeypatch, se
     monkeypatch.setattr(main.Baseline, "from_recorder", classmethod(lambda cls, o, r: (_ for _ in ()).throw(ValueError("x"))))
     body = result_json(call(server, "audit_site", {"url": B}))
     assert body["report_id"] in main._reports
+
+
+# --- get_report and propose_fixes ---------------------------------------------------------------------------
+def audited(monkeypatch, server, extra=None, home=None):
+    setup_site(monkeypatch, pages_for(home=home, extra=extra))
+    return result_json(call(server, "audit_site", {"url": B}))["report_id"]
+
+
+def test_get_report_returns_the_stored_report_labelled(monkeypatch, server):
+    setup_site(monkeypatch, pages_for())
+    first = result_json(call(server, "audit_site", {"url": B}))
+    body = result_json(call(server, "get_report", {"report_id": first["report_id"]}))
+    assert body["report_id"] == first["report_id"] and body["site"] == B
+    assert body["untrusted_content_notice"] == UNTRUSTED_NOTICE
+    assert body["findings"] == first["findings"] and body["score"] == first["score"]
+
+
+@pytest.mark.parametrize("rid,code", [("nope", "invalid_request"), ("", "invalid_request"), ("../x", "invalid_request"),
+                                      ("A" * 32, "invalid_request"), ("0" * 31, "invalid_request"),
+                                      ("0" * 33, "invalid_request"), ("0" * 32, "not_found")])
+def test_get_report_rejects_malformed_or_unknown_ids(monkeypatch, server, rid, code):
+    setup_site(monkeypatch, pages_for())
+    assert error_json(call(server, "get_report", {"report_id": rid}))["error"] == code
+    assert error_json(call(server, "propose_fixes", {"report_id": rid}))["error"] == code
+
+
+def test_a_non_string_report_id_is_a_tool_error_with_no_traceback(server):
+    r = call(server, "get_report", {"report_id": 5})
+    assert r.is_error and "Traceback" not in r.content[0].text
+
+
+def test_propose_fixes_returns_diffs_and_skips_and_never_content(monkeypatch, server):
+    rid = audited(monkeypatch, server)
+    body = result_json(call(server, "propose_fixes", {"report_id": rid}))
+    assert body["report_id"] == rid and body["untrusted_content_notice"] == UNTRUSTED_NOTICE
+    assert {f["id"] for f in body["fixes"]} == {"llms_txt", "json_ld"}
+    assert all(f["diff"] and f["status"] == "proposed" for f in body["fixes"])
+    assert "content" not in set(walk_keys(body))
+    assert any(s["kind"] == "mcp_stub" for s in body["skipped"])
+    assert "cannot approve" in body["approval"].lower()
+
+
+def test_an_agent_sees_the_owners_decision_but_cannot_make_it(monkeypatch, server):
+    from fastapi.testclient import TestClient
+    rid = audited(monkeypatch, server)
+    call(server, "propose_fixes", {"report_id": rid})
+    owner = TestClient(main.app)                                    # the owner, through the REST API
+    assert owner.post(f"/report/{rid}/fixes/llms_txt/approve").json()["status"] == "approved"
+    body = result_json(call(server, "propose_fixes", {"report_id": rid}))
+    assert {f["id"]: f["status"] for f in body["fixes"]} == {"llms_txt": "approved", "json_ld": "proposed"}
+    assert "content" not in set(walk_keys(body))
+    # and the only way to export is the owner's REST call: still gated per fix
+    assert owner.get(f"/report/{rid}/fixes/json_ld/export").status_code == 409
+    assert owner.get(f"/report/{rid}/fixes/llms_txt/export").status_code == 200
+
+
+def test_proposal_is_idempotent_through_mcp(monkeypatch, server):
+    rid = audited(monkeypatch, server)
+    a = result_json(call(server, "propose_fixes", {"report_id": rid}))
+    b = result_json(call(server, "propose_fixes", {"report_id": rid}))
+    assert a == b
+
+
+def test_a_rejected_fix_stays_rejected_when_the_agent_proposes_again(monkeypatch, server):
+    from fastapi.testclient import TestClient
+    rid = audited(monkeypatch, server)
+    call(server, "propose_fixes", {"report_id": rid})
+    TestClient(main.app).post(f"/report/{rid}/fixes/json_ld/reject")
+    body = result_json(call(server, "propose_fixes", {"report_id": rid}))
+    assert {f["id"]: f["status"] for f in body["fixes"]}["json_ld"] == "rejected"
+
+
+def test_huge_diffs_are_clipped_and_marked(monkeypatch, server):
+    paths = {f"/p{i}": {"get": {"operationId": f"op{i}", "summary": "S" * 290 + str(i)}} for i in range(20)}
+    spec = json.dumps({"openapi": "3.0.0", "info": {"title": "A", "version": "1"}, "paths": paths})
+    rid = audited(monkeypatch, server, extra={"/openapi.json": spec})
+    body = result_json(call(server, "propose_fixes", {"report_id": rid}))
+    stub = next(f for f in body["fixes"] if f["id"] == "mcp_stub")
+    assert len(stub["diff"]) <= 8003 and stub["diff_truncated"] is True
+    assert main._proposals[rid][0].get("mcp_stub").diff.__len__() > 8003      # the full diff is intact server-side
+    assert all(len(f["diff"]) <= 8003 for f in body["fixes"])
+
+
+def test_mcp_makes_no_site_requests_after_the_audit(monkeypatch, server):
+    fake = setup_site(monkeypatch, pages_for())
+    rid = result_json(call(server, "audit_site", {"url": B}))["report_id"]
+    n = len(fake.calls)
+    assert n > 1
+    for name in ("get_report", "propose_fixes", "propose_fixes", "get_report"):
+        assert not call(server, name, {"report_id": rid}).is_error
+    assert len(fake.calls) == n
+
+
+def test_a_slow_audit_does_not_block_other_calls(monkeypatch, server):
+    import asyncio
+    import time
+
+    from mcp.client import Client
+    setup_site(monkeypatch, pages_for())
+    good = result_json(call(server, "audit_site", {"url": B}))["report_id"]
+    real = main.post_audit
+
+    def slow(*a, **k):
+        time.sleep(1.0)
+        return real(*a, **k)
+    monkeypatch.setattr(main, "post_audit", slow)
+
+    async def go():
+        async with Client(server) as c:
+            start = time.monotonic()                 # before the sleep: a blocked event loop delays the sleep too
+            slow_call = asyncio.create_task(c.call_tool("audit_site", {"url": B}))
+            await asyncio.sleep(0.2)
+            r = await c.call_tool("get_report", {"report_id": good})
+            fast = time.monotonic() - start
+            finished = await slow_call
+            return r, fast, finished
+    r, fast, finished = asyncio.run(go())
+    assert not r.is_error and not finished.is_error and fast < 0.8
