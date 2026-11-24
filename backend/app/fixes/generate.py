@@ -7,7 +7,7 @@ import re
 import unicodedata
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, CData, NavigableString, Tag
 
 from .models import (DESC_CLIP, FIELD_CLIP, LINK_TEXT_CLIP, LLMS_MAX_LINKS, MCP_MAX_TOOLS, NotEnoughContent,
                      SecretInSiteText)
@@ -55,14 +55,24 @@ def _soup(html: str) -> BeautifulSoup:
     return BeautifulSoup(html, "html.parser")
 
 
-def _text(tag, limit: int) -> str:
-    """The first `limit` characters of a tag's text. It stops early, so deeply nested markup stays cheap."""
-    parts, total = [], 0
-    for piece in tag.strings:
-        parts.append(piece)
-        total += len(piece)
-        if total >= limit:
-            break
+def _text(tag, limit: int, max_nodes: int = 200) -> str:
+    """The first `limit` characters of a tag's text, found by walking its children with a cap on the nodes visited.
+    (BeautifulSoup's own text helpers cost time in proportion to how deeply a tag is nested, which hostile markup can
+    exploit: here the work per tag is bounded.) Comments, scripts and styles are not text."""
+    parts, total, visited = [], 0, 0
+    stack = [iter(tag.contents)]
+    while stack and total < limit and visited < max_nodes:
+        try:
+            node = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            continue
+        visited += 1
+        if type(node) in (NavigableString, CData):
+            parts.append(str(node))
+            total += len(node)
+        elif isinstance(node, Tag) and node.name not in ("script", "style"):
+            stack.append(iter(node.contents))
     return "".join(parts)[:limit]
 
 

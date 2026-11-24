@@ -69,8 +69,8 @@ def test_c1_nested_anchors_do_not_make_proposal_quadratic():
     html = HEAD + "<a href='/x'>link" * 20_000 + "</a>" * 20_000 + "</body></html>"
     started = time.perf_counter()
     p = propose_fixes(EMPTY, Baseline(O, {"/": (200, html)}))
-    assert time.perf_counter() - started < 5
-    assert [f.id for f in p.fixes] == ["llms_txt", "json_ld"] or p.skipped
+    assert time.perf_counter() - started < 3
+    assert [f.id for f in p.fixes] == ["llms_txt", "json_ld"]
 
 
 @pytest.mark.parametrize("html", ["x" * 500_001, HEAD + "<p>" * 120_000])
