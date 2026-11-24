@@ -87,12 +87,16 @@ All commands run from the repository root unless a `cd` is shown.
 
 ## What the report shows
 
-Per snapshot: valid runs and successes with the sample size, every failure and its reason, invalid runs (excluded from
-the denominator and listed), the spread across the repeats, and the provenance (criteria hash, harness hash, model and
+Per snapshot: valid runs and successes with the number of independent units behind them ("N sites, M site-task cells,
+K runs"), a per-task table, every failure and its reason, invalid runs (excluded from the denominator and listed), the
+spread across the repeats, and the provenance (criteria hash, harness hash, model, answering model, pre-registration and
 commit found in the runs). Then a paired before/after comparison that uses only runs of the same site, task and repeat
-whose criteria, label, harness, model, limits and guard settings match, with the counts of fail to pass, pass to fail,
-pass to pass and fail to fail. Before-only sites stay visible but are not paired. With fewer than 30 valid runs the report
-says "Small sample: treat differences as indicative only". It computes no statistical test.
+whose criteria, label, harness, model, answering model, limits and guard settings match, with the counts of fail to pass,
+pass to fail, pass to pass and fail to fail overall, per task and per site. Before-only sites stay visible but are not
+paired. The report flags, and never pairs, runs that were not pre-registered or whose criteria or label changed after the
+run, and it refuses an `after` result for a site that is not `after_eligible` in `benchmark/sites.json`. While fewer than 30
+sites or 30 site-task cells stand behind the results it says "Small sample: treat differences as indicative only"
+(repeats of one cell are not independent samples). It computes no statistical test.
 
 ## What you may and may not claim
 

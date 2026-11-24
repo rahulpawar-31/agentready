@@ -141,7 +141,7 @@ def load_sites(path) -> tuple[list[Site], list[str]]:
     """Read the registry. Problems are returned, never raised."""
     try:
         data = json.loads(Path(path).read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):                 # RecursionError: a deeply nested file
         return [], ["the site registry could not be read as JSON"]
     if not isinstance(data, dict):
         return [], ["the site registry must be a JSON object"]

@@ -55,6 +55,11 @@ def _slug(host: str) -> str:
     return re.sub(r"[^a-z0-9._-]", "_", host.lower())
 
 
+def site_slug(host: str) -> str:
+    """The directory name a site's results are written under (public, so readers can check a file's location)."""
+    return _slug(host)
+
+
 def run_path(root, snapshot: str, host: str, task_id: str, repeat: int) -> Path:
     return Path(root) / snapshot / _slug(host) / f"{task_id}-{repeat}.json"
 
@@ -85,10 +90,36 @@ def _read(base: Path, p: Path, problems: list | None):
         if not isinstance(data, dict):
             raise ValueError("not an object")
         return data
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):        # RecursionError: a hostile deeply nested file
         if problems is not None:
             problems.append(f"{p.relative_to(base).as_posix()} is not readable")
         return None
+
+
+def read_run_files(root, snapshot: str, problems: list | None = None) -> list[tuple[Path, dict, bool]]:
+    """Every readable result file of a snapshot as (path relative to the snapshot, data, is_invalid_file).
+    Symlinks (files, directories or the snapshot itself) are never followed: each is skipped and described in
+    `problems`. Unreadable files are skipped and described too. Nothing is written."""
+    base = Path(root) / snapshot
+    if base.is_symlink():
+        if problems is not None:
+            problems.append(f"{snapshot} is a symlink and was ignored")
+        return []
+    if not base.is_dir():
+        return []
+    out: list[tuple[Path, dict, bool]] = []
+    for p in sorted(base.rglob("*")):
+        rel = p.relative_to(base)
+        if p.is_symlink():
+            if problems is not None:
+                problems.append(f"{rel.as_posix()} is a symlink and was ignored")
+            continue
+        if p.suffix != ".json" or p.name.startswith("."):
+            continue
+        data = _read(base, p, problems)
+        if data is not None:
+            out.append((rel, data, _is_invalid_file(p)))
+    return out
 
 
 def load_runs(root, snapshot: str, problems: list | None = None) -> list[dict]:
@@ -115,7 +146,7 @@ def is_valid_result(path: Path) -> bool:
     try:
         data = json.loads(Path(path).read_text())
         return bool(data["result"]["valid"])
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return False
 
 
