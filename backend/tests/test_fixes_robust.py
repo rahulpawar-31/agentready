@@ -73,7 +73,7 @@ def test_c1_nested_anchors_do_not_make_proposal_quadratic():
     assert [f.id for f in p.fixes] == ["llms_txt", "json_ld"] or p.skipped
 
 
-@pytest.mark.parametrize("html", ["x" * 500_001, HEAD + "<p>" * 60_000])
+@pytest.mark.parametrize("html", ["x" * 500_001, HEAD + "<p>" * 120_000])
 def test_i5_pages_beyond_the_size_or_tag_cap_are_skipped(html):
     p = propose_fixes(EMPTY, Baseline(O, {"/": (200, html)}))
     reasons = {s.kind: s.reason for s in p.skipped}

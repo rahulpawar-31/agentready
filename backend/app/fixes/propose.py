@@ -12,20 +12,57 @@ from .validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_
 
 DIFF_MAX_CHARS = 100_000        # a diff the owner cannot realistically review is not presented
 MAX_PAGE_CHARS = 500_000        # a home page beyond this is not processed (bounds the work on hostile pages)
-MAX_PAGE_TAGS = 50_000
-_HEAD_CLOSE = re.compile(r"</head\s*>", re.I)
+MAX_PAGE_TAGS = 100_000
+EXCERPT_CONTEXT = 200           # characters shown either side of the insertion point in an excerpt diff
+LONG_LINE_CHARS = 2000          # a line longer than this is not reviewable as a diff: show an excerpt instead
+
+# Text a browser does not treat as markup: comments, and the raw-text elements script, style, textarea and title.
+# An unclosed one runs to the end of the page, as it does in a browser. The first </head> outside them is real.
+_SKIP_OR_HEAD_CLOSE = re.compile(
+    r"<!--.*?-->|<!--.*\Z"
+    r"|<(script|style|textarea|title)\b[^>]*>(?:.*?</\1\s*>|.*\Z)"
+    r"|(</head\s*>)", re.I | re.S)
+
+
+def _insertion(html: str, snippet: str):
+    """(position, inserted text) for the snippet, or None when the page has no real </head>. When </head> starts its
+    own line the snippet is added as whole lines; otherwise the line is split at </head>."""
+    for m in _SKIP_OR_HEAD_CLOSE.finditer(html):
+        if m.group(2) is None:
+            continue
+        start = m.start(2)
+        line_start = html.rfind("\n", 0, start) + 1
+        if not html[line_start:start].strip():
+            return line_start, snippet
+        return start, "\n" + snippet
+    return None
 
 
 def insert_before_head_close(html: str, snippet: str):
-    """`html` with `snippet` inserted before the first </head>, or None when there is none. When </head> starts its
-    own line the snippet is added as whole lines; otherwise the line is split at </head>."""
-    m = _HEAD_CLOSE.search(html)
-    if m is None:
+    """`html` with `snippet` inserted before the first real </head> (not one inside a comment, script, style,
+    textarea or title), or None when there is none."""
+    found = _insertion(html, snippet)
+    if found is None:
         return None
-    line_start = html.rfind("\n", 0, m.start()) + 1
-    if not html[line_start:m.start()].strip():
-        return html[:line_start] + snippet + html[line_start:]
-    return html[:m.start()] + "\n" + snippet + html[m.start():]
+    position, inserted = found
+    return html[:position] + inserted + html[position:]
+
+
+def _json_ld_diff(home: str, snippet: str):
+    """(diff, kind) for the home page patch, or None without a real </head>. A page with a very long line is shown
+    as an excerpt around the insertion point instead: the whole page would not be reviewable."""
+    found = _insertion(home, snippet)
+    if found is None:
+        return None
+    position, inserted = found
+    if max(map(len, home.split("\n"))) <= LONG_LINE_CHARS:
+        full = make_diff("index.html", home, home[:position] + inserted + home[position:])
+        if len(full) <= DIFF_MAX_CHARS:
+            return full, "full"
+    start, end = max(0, position - EXCERPT_CONTEXT), min(len(home), position + EXCERPT_CONTEXT)
+    before = home[start:end]
+    after = home[start:position] + inserted + home[position:end]
+    return make_diff("index.html (excerpt)", before, after), "excerpt"
 
 
 def _finding(report: Report, check_id: str):
@@ -120,14 +157,18 @@ def propose_fixes(report: Report, baseline: Baseline) -> Proposal:
         except SecretInSiteText as e:
             skipped.append(Skipped(FixKind.JSON_LD, f"contains a secret-like value ({e.label})"))
         else:
-            patched = insert_before_head_close(home, snippet)
-            if patched is None:
+            shown = _json_ld_diff(home, snippet)
+            if shown is None:
                 skipped.append(Skipped(FixKind.JSON_LD, "no </head> in the home page HTML to patch"))
             else:
+                diff, kind = shown
                 fix = Fix("json_ld", FixKind.JSON_LD, "/", "jsonld-snippet.html",
                           "Add a schema.org WebSite JSON-LD snippet to the home page head, built from the home page "
                           "title and description.",
-                          snippet, make_diff("index.html", home, patched), "json_ld")
+                          snippet, diff, "json_ld", diff_kind=kind)
+                if kind == "excerpt":
+                    fix.note = ("The page has a very long line, so the diff shows only the text around the insertion "
+                                "point (an excerpt), not the whole page.")
                 add(_finish(fix, validate_json_ld_snippet(snippet), home))
 
     # OpenAPI -> MCP stub

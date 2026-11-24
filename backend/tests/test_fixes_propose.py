@@ -104,10 +104,11 @@ def test_a_secret_only_in_the_home_page_context_is_a_warning_not_a_block():
     assert all(find_secrets(x.content) == [] for x in p.fixes)
 
 
-def test_an_oversized_diff_is_skipped():
+def test_a_page_whose_diff_would_be_too_large_gets_an_excerpt_not_a_skip():
     big = "<html><head><title>T</title><meta name='description' content='d'></head><body>" + "x " * 100_000 + "</body></html>"
     p, _ = run({"/": big})
-    assert "too large" in kinds(p)[1][FixKind.JSON_LD]
+    ld = next(x for x in p.fixes if x.kind is FixKind.JSON_LD)
+    assert ld.diff_kind == "excerpt" and len(ld.diff) < 5000
 
 
 def test_an_invalid_output_is_never_presented(monkeypatch):
