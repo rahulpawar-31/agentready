@@ -74,6 +74,7 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
     report: document.getElementById("step-report"), fixes: document.getElementById("step-fixes"),
   };
   const pending = new Set();
+  const usedSnapshots = new Set();
   const idle = async () => { while (pending.size > 0) await Promise.allSettled([...pending]); };
   if (Object.values(el).some((node) => node === null || node === undefined)) return { idle, store };
 
@@ -106,10 +107,13 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
     if (!site) { say(MSG.badAddress); focus("site-input"); return; }
     run(button, async () => {
       say("");
+      // A failed lookup for a newly submitted host must not leave old site's verification button or report visible.
+      hide(el.verify); hide(el.report); hide(el.fixes);
+      store.clearReportId();
+      store.set({ site: site.url, domain: site.domain, report: null, fixes: null, step: "url" });
       const result = await api.ownershipToken(site.domain);
-      if (!result.ok) { say(failureMessage(result)); return; }          // nothing is hidden or forgotten until the lookup worked
+      if (!result.ok) { say(failureMessage(result)); return; }
       const node = renderInstructions(document, result.data, { onVerify });
-      hide(el.report); hide(el.fixes); store.clearReportId();
       store.set({ site: site.url, domain: site.domain, report: null, fixes: null, step: "verify" });
       show(el.verify, node);
       focus("verify-heading");
@@ -140,7 +144,12 @@ export async function start({ document, fetch: fetchImpl, storage = null, clipbo
   function onReaudit(button) {
     run(button, async () => {
       say(MSG.checking);
-      const result = await api.audit(store.get().site, snapshotName(now()));
+      const base = snapshotName(now());
+      let snapshot = base;
+      let suffix = 1;
+      while (usedSnapshots.has(snapshot)) snapshot = `${base}-${suffix++}`;
+      usedSnapshots.add(snapshot);
+      const result = await api.audit(store.get().site, snapshot);
       if (!result.ok) { say(failureMessage(result)); return; }
       acceptReport(result.data);
       hide(el.fixes);
