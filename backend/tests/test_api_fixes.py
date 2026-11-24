@@ -111,7 +111,7 @@ def test_reject_after_approve_blocks_export_and_reapprove_is_409(monkeypatch):
     assert c.post(f"/report/{rid}/fixes/llms_txt/reject").json()["status"] == "rejected"
     assert c.get(f"/report/{rid}/fixes/llms_txt/export").status_code == 409
     r = c.post(f"/report/{rid}/fixes/llms_txt/approve")
-    assert r.status_code == 409 and "propose again" in r.json()["detail"]
+    assert r.status_code == 409 and "new audit" in r.json()["detail"]
 
 
 def test_unknown_report_or_fix_is_404_and_get_before_post_is_404(monkeypatch):
@@ -149,18 +149,6 @@ def test_every_export_of_a_realistic_site_passes_the_secret_scan(monkeypatch):
     assert "template" in c.get(f"/report/{rid}/fixes/json_ld/export").json()["note"]
 
 
-def test_no_fix_endpoint_makes_a_request_to_the_site(monkeypatch):
-    c, fake, rid, _ = audited(monkeypatch, extra={"/openapi.json": json.dumps(SPEC)})
-    before = len(fake.calls)
-    c.post(f"/report/{rid}/fixes")
-    for fid in ("llms_txt", "json_ld", "mcp_stub"):
-        c.post(f"/report/{rid}/fixes/{fid}/approve")
-        c.get(f"/report/{rid}/fixes/{fid}/export")
-        c.post(f"/report/{rid}/fixes/{fid}/reject")
-    c.get(f"/report/{rid}/fixes")
-    assert len(fake.calls) == before
-
-
 def test_old_reports_are_evicted_together_with_their_baselines_and_fixes(monkeypatch):
     monkeypatch.setattr(main, "MAX_REPORTS", 1)
     c, _, first, _ = audited(monkeypatch)
@@ -179,3 +167,73 @@ def test_site_text_in_the_diff_is_returned_as_data_not_markup(monkeypatch):
     assert "<img" not in r.text and "<script>alert" not in r.text           # site text never arrives as raw markup
     diffs = {f["id"]: f["diff"] for f in r.json()["fixes"]}
     assert "\\u003cimg" in diffs["json_ld"] and "onerror" in diffs["json_ld"]
+
+
+def real_stack(monkeypatch, tmp_path, routes):
+    """The real guard, cache and HTTP client over a mock transport that records every request."""
+    import httpx
+    seen = []
+
+    def handler(req):
+        seen.append(req.url.path)
+        status, body = routes.get(req.url.path, (404, ""))
+        return httpx.Response(status, text=body)
+
+    monkeypatch.setattr(main, "new_http_client", lambda: httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=False, trust_env=False))
+    monkeypatch.setattr(main, "GUARD_OPTIONS", {"sleep": lambda s: None})
+    monkeypatch.setattr(main, "CACHE_DIR", tmp_path / "cache")
+    main.app.dependency_overrides[main.get_txt_lookup] = lambda: (lambda name: [])
+    main.app.dependency_overrides[main.get_resolver] = lambda: public_resolver
+    return TestClient(main.app), seen
+
+
+def test_i6_the_baseline_adds_no_requests_and_a_503_during_the_audit_gives_no_fix(monkeypatch, tmp_path):
+    import collections
+    down = {"/llms.txt", "/openapi.json", "/swagger.json", "/.well-known/openapi.json"}
+    routes = {"/": (200, site_html()), **{path: (503, "") for path in down}}
+    c, seen = real_stack(monkeypatch, tmp_path, routes)
+    r = c.post("/audit", json={"url": B})
+    assert r.status_code == 200
+    counts = collections.Counter(seen)
+    assert all(counts[p] == 1 for p in down), counts          # 503s are never cached: a second fetch would show here
+    assert len(seen) == 10                                    # one ownership probe plus the audit's nine paths
+    body = c.post(f"/report/{r.json()['id']}/fixes").json()
+    assert "mcp_stub" not in {f["id"] for f in body["fixes"]} and "llms_txt" not in {f["id"] for f in body["fixes"]}
+    reasons = {s["kind"]: s["reason"] for s in body["skipped"]}
+    assert "could not reach" in reasons["llms_txt"] and reasons["mcp_stub"] == "no OpenAPI document was found"
+    assert len(seen) == 10                                    # proposing fixes made no request either
+
+
+def test_no_fix_endpoint_makes_a_request_builds_a_fetcher_or_writes_a_file(monkeypatch, tmp_path):
+    import builtins
+    import socket
+    c, seen = real_stack(monkeypatch, tmp_path, {"/": (200, site_html()), "/openapi.json": (200, json.dumps(SPEC))})
+    rid = c.post("/audit", json={"url": B}).json()["id"]
+    after_audit = len(seen)
+    assert after_audit == 10
+    # From here on any attempt to reach the network, build a fetcher or write a file fails the test.
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a fix endpoint tried to touch the network, a fetcher or a file")
+
+    monkeypatch.setattr(main, "new_http_client", forbidden)
+    monkeypatch.setattr(main, "build_audit_fetcher", forbidden)
+    monkeypatch.setattr(main, "build_probe_fetcher", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    real_open = builtins.open
+
+    def read_only_open(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in "wax+"):
+            forbidden()
+        return real_open(file, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", read_only_open)
+    body = c.post(f"/report/{rid}/fixes").json()
+    assert {f["id"] for f in body["fixes"]} == {"llms_txt", "json_ld", "mcp_stub"}
+    for fid in ("llms_txt", "json_ld", "mcp_stub"):
+        assert c.post(f"/report/{rid}/fixes/{fid}/approve").status_code == 200
+        assert c.get(f"/report/{rid}/fixes/{fid}/export").status_code == 200
+        assert c.post(f"/report/{rid}/fixes/{fid}/reject").status_code == 200
+    assert c.get(f"/report/{rid}/fixes").status_code == 200
+    assert len(seen) == after_audit                            # not one more request reached the site

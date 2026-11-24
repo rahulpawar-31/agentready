@@ -105,3 +105,80 @@ def test_a_good_snippet_validates():
 ])
 def test_json_ld_validator_rejects_bad_snippets(snippet):
     assert validate_json_ld_snippet(snippet) != []
+
+
+# --- Group E of the Plan 3 review: invisible characters, Markdown, bare links, title choice, on-site links
+def _page(title="Acme", description="", body=""):
+    meta = f'<meta name="description" content="{description}">' if description else ""
+    return f"<html><head><title>{title}</title>{meta}</head><body>{body}</body></html>"
+
+
+def test_e_bidi_zero_width_and_bom_characters_are_removed_from_both_outputs():
+    nasty = "abc‮evil⁦x​‍﻿z"
+    page = _page(title=nasty, description="d" + nasty, body=f'<a href="/a">link{nasty}</a>')
+    txt = build_llms_txt(O, page)
+    assert not any(ch in txt for ch in "‮⁦​‍﻿") and txt.startswith("# abcevilxz\n")
+    ld = json_ld_snippet(build_json_ld(O, page))
+    assert "\\u202e" not in ld and "‮" not in ld and "abcevilxz" in ld
+    assert validate_llms_txt(txt, O) == []
+
+
+def test_e_unusual_spaces_become_ordinary_spaces():
+    txt = build_llms_txt(O, _page(title="a b　c d", description="x"))
+    assert txt.startswith("# a b c d\n")
+
+
+def test_e_bare_urls_and_emails_in_free_text_are_removed_so_markdown_cannot_auto_link_them():
+    page = _page(title="Visit www.evil.test or https://evil.test/p now", description="Mail help@evil.test or see http://evil.test/x",
+                 body='<a href="/a">![x](https://evil.test/track.png)</a><a href="/b">go www.evil.test</a>')
+    txt = build_llms_txt(O, page)
+    assert "evil.test" not in txt and "@" not in txt and "http://" not in txt.replace("https://x.test", "")
+    assert txt.startswith("# Visit or now\n")
+    assert validate_llms_txt(txt, O) == []
+
+
+def test_e_markdown_emphasis_backticks_and_bangs_are_removed_from_free_text():
+    page = _page(title="*bold* `code` _under_ ~~strike~~ Wow!", description="*a* _b_ `c` ~d~ !e")
+    lines = build_llms_txt(O, page).splitlines()
+    for line in (lines[0], lines[2]):
+        assert not any(ch in line[2:] for ch in "*`_~!"), line
+
+
+def test_e_the_title_comes_from_the_head_not_from_an_inline_svg():
+    page = '<html><head><title>Real name</title></head><body><svg><title>Icon label</title></svg><a href="/a">A</a></body></html>'
+    assert build_llms_txt(O, page).startswith("# Real name\n")
+    assert build_json_ld(O, page)["name"] == "Real name"
+    svg_first = '<body><svg><title>Icon label</title></svg><h1>x</h1><title>Page title</title><a href="/a">A</a></body>'
+    assert build_json_ld(O, svg_first)["name"] == "Page title"
+    with pytest.raises(NotEnoughContent):
+        build_json_ld(O, '<body><svg><title>Icon label</title></svg></body>')
+
+
+@pytest.mark.parametrize("origin,href,expected", [
+    ("https://x.test", "http://x.test/a", None),                        # an http link under an https site is not rewritten
+    ("https://x.test", "/a", "https://x.test/a"),
+    ("https://x.test:443", "/a", "https://x.test:443/a"),               # an explicit default port is the same site
+    ("https://x.test:443", "https://x.test/a", "https://x.test:443/a"),
+    ("https://x.test", "https://x.test:443/a", "https://x.test/a"),
+    ("https://x.test", "https://x.test:8443/a", None),
+    ("http://x.test:80", "/a", "http://x.test:80/a"),
+    ("http://x.test", "http://x.test:80/a", "http://x.test/a"),
+    ("https://x.test", "https://user:pw@x.test/a", None),
+    ("https://x.test", "https://x.test.evil.test/a", None),
+    ("https://x.test", "//evil.test/a", None),
+    ("https://x.test", "https://X.TEST/a?s=1#f", "https://x.test/a"),
+])
+def test_e_links_must_be_the_same_scheme_host_and_port_as_the_verified_origin(origin, href, expected):
+    from app.fixes.generate import _site_link
+    assert _site_link(origin, href) == expected
+
+
+def test_e_a_site_with_an_explicit_default_port_keeps_its_links_in_llms_txt():
+    page = _page(description="d", body='<a href="/shop">Shop</a><a href="https://x.test/about">About</a>')
+    txt = build_llms_txt("https://x.test:443", page)
+    assert "- [Shop](https://x.test:443/shop)" in txt and "- [About](https://x.test:443/about)" in txt
+    assert validate_llms_txt(txt, "https://x.test:443") == []
+
+
+def test_e_the_validator_rejects_a_link_with_another_scheme():
+    assert validate_llms_txt("# A\n\n## Pages\n- [x](http://x.test/p)\n", O) != []
