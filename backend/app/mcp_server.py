@@ -403,7 +403,7 @@ def make_mcp_app(server: MCPServer, allowed_hosts: list | None = None, allowed_o
 
 class _Allowed:
     """Exact matching for Host and Origin values. An entry ending in `:*` means that exact text followed by a numeric
-    port (1 to 5 digits, at most 65535); any other entry must match the whole value exactly. The SDK's own check
+    port (1 to 65535, no leading zero); any other entry must match the whole value exactly. The SDK's own check
     matches by prefix (`localhost:8000@evil.test` passes it), so this runs in front of it."""
 
     def __init__(self, entries: list):
@@ -414,7 +414,7 @@ class _Allowed:
             if not entry:
                 continue
             if entry.endswith(":*"):
-                self._with_port.append(re.compile(re.escape(entry[:-2]) + r":([0-9]{1,5})"))
+                self._with_port.append(re.compile(re.escape(entry[:-2]) + r":([1-9][0-9]{0,4})"))
             else:
                 self._exact.add(entry)
 

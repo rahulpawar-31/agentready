@@ -187,7 +187,8 @@ def test_the_default_hosts_are_accepted(host):
 @pytest.mark.parametrize("host", [
     "localhost:8000@evil.test", "localhost:8000.evil.test", "localhost:evil.test", "localhost", "LOCALHOST:8000",
     "localhost.evil.test:8000", "evil.test", "localhost:", "localhost:8000:9", "localhost:123456", "127.0.0.1",
-    "localhost:8000 evil.test", "[::1]", "localhost:80a"])
+    "localhost:8000 evil.test", "[::1]", "localhost:80a", "localhost:0", "localhost:00080", "localhost:65536",
+    "localhost:99999", "127.0.0.1:0", "[::1]:65536"])
 def test_host_confusions_are_refused(host):
     with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
         assert post(c, host=host) == 421
@@ -201,7 +202,8 @@ def test_the_default_origins_are_accepted(origin):
 
 @pytest.mark.parametrize("origin", [
     "http://localhost:3000@evil.test", "http://localhost:3000.evil.test", "null", "http://localhost", "https://localhost:3000",
-    "http://LOCALHOST:3000", "http://evil.test", "http://localhost:3000/", "http://localhost:3000/x", "", "localhost:3000"])
+    "http://LOCALHOST:3000", "http://evil.test", "http://localhost:3000/", "http://localhost:3000/x", "", "localhost:3000",
+    "http://localhost:0", "http://localhost:65536", "http://localhost:00080", "http://[::1]:99999"])
 def test_origin_confusions_are_refused(origin):
     with TestClient(fresh_app(), base_url="http://localhost:8000") as c:
         assert post(c, origin=origin) in (403, 421)

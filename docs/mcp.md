@@ -76,7 +76,7 @@ was proposed.
 - **Host and origin checks (DNS-rebinding protection) are on, and exact.** AgentReady checks the `Host` header (exactly
   one is required) and, when one is sent, the `Origin` header **before** the SDK's own check, and the SDK's check stays
   on as well. The SDK matches by prefix (`localhost:8000@evil.test` would pass it); ours matches the whole value. By
-  default `Host` must be `localhost`, `127.0.0.1` or `[::1]` followed by `:` and a numeric port (1 to 65535), and an
+  default `Host` must be `localhost`, `127.0.0.1` or `[::1]` followed by `:` and a numeric port (1 to 65535, no leading zero), and an
   `Origin`, if sent, must be `http://` plus one of those names and a numeric port. Uppercase names, a missing port,
   `Origin: null`, paths, and user information are refused (421 for `Host`, 403 for `Origin`). To serve the app under
   another name set `AGENTREADY_MCP_ALLOWED_HOSTS` and `AGENTREADY_MCP_ALLOWED_ORIGINS` (comma separated; they

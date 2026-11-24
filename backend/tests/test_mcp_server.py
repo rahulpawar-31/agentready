@@ -155,3 +155,15 @@ def test_the_audit_description_is_honest_about_who_receives_the_probe(server):
     assert "before control is proven" in d and "dns" in d and "requested host" in d and "home page" in d
     assert "verified host only" not in d                  # the probe goes to the host that was asked for
     assert "one audit per host" in d or "one audit at a time" in d
+
+
+@pytest.mark.parametrize("char,width", [("é", 2), ("€", 3), ("😀", 4)])
+def test_clips_count_utf8_bytes_not_characters_and_never_cut_a_character(char, width):
+    """A 300-character string of 3-byte characters would be 900 bytes: the limits are in bytes (review finding M9)."""
+    text = char * 5000
+    out = decorate({"evidence": text, "diff": text, "url": text})
+    for key, limit in (("evidence", STRING_CLIP), ("url", STRING_CLIP), ("diff", DIFF_CLIP)):
+        raw = out[key].encode("utf-8")                                    # encoding proves no half character was left
+        assert len(raw) <= limit + len("..."), (key, len(raw))
+        assert out[key].endswith("...") and out[key][:-3] == char * ((len(out[key]) - 3))
+        assert len(raw) > limit - width - 1                               # it keeps as much as the limit allows

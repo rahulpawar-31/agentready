@@ -536,3 +536,4 @@ Also a **real-protocol HTTP test** that talks to a real listening server (not Te
 - **Found on the final re-run of the reviewer's scripts (d4):** `GET /mcp` with `Accept: text/event-stream` opened an event
   stream that never ended (the stateless server never sends anything on its own). The gateway now answers `POST` only;
   every other method gets 405 with `Allow: POST` after the Host and Origin check. Test: `test_only_post_is_served_and_nothing_can_hold_a_stream_open`.
+- **Found by the mutation check:** the exact Host/Origin check accepted `localhost:0` and `localhost:00080` although the docs say ports run from 1 to 65535, and no test covered ports above 65535 or clips of multi-byte text. The port pattern is now `[1-9][0-9]{0,4}` (and at most 65535); tests: `test_host_confusions_are_refused`, `test_origin_confusions_are_refused`, `test_clips_count_utf8_bytes_not_characters_and_never_cut_a_character`.
