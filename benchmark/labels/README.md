@@ -32,6 +32,7 @@ The audit runner refuses to fetch pages until the label file, including all 13 `
 
 ```bash
 cd backend
+export AGENTREADY_SECRET=<the same value the API server uses>
 python -m app.runner.audit_cli --label ../benchmark/labels/example.test.json --snapshot before
 ```
 
