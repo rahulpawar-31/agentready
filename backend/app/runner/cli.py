@@ -35,8 +35,15 @@ class Deps:
     git_head: Callable[[], str] = lambda: ""         # the commit the criteria and label were checked against
 
 
+GIT_MISSING = "git could not be run (is git installed and on PATH?)"
+
+
 def _git(repo_root, *args) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "--literal-pathspecs", "-C", str(repo_root), *args], capture_output=True, text=True)
+    cmd = ["git", "--literal-pathspecs", "-C", str(repo_root), *args]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except OSError:                       # git is not installed or not on PATH: return code 127, as a shell would
+        return subprocess.CompletedProcess(cmd, 127, "", GIT_MISSING)
 
 
 def git_head(repo_root=REPO_ROOT) -> str:
@@ -53,6 +60,9 @@ def git_problems(paths, repo_root=REPO_ROOT) -> list[str]:
         rel = os.path.relpath(p, repo_root)
         name = f"{Path(p).name} (outside the repository)" if rel.startswith("..") else rel
         staged = _git(repo_root, "ls-files", "-s", "--", rel)
+        if staged.returncode == 127:
+            problems.append(GIT_MISSING)
+            continue
         entry = staged.stdout.split() if staged.returncode == 0 else []
         if not entry:
             problems.append(f"{name} is not committed")
@@ -74,7 +84,7 @@ def load_criteria(path) -> tuple[dict, str]:
     try:
         raw = Path(path).read_bytes()
         data = json.loads(raw)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         raise ValueError("The criteria file could not be read as JSON")
     for key, expected in (("toolset_version", TOOLSET_VERSION), ("step_limit", STEP_LIMIT), ("max_turns", MAX_TURNS),
                           ("harness_sha256", harness_sha256())):

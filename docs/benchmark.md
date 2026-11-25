@@ -40,6 +40,17 @@ them, and are not a measure of agent performance. The owner's labels are not ver
    `permission_note`. Ask in the Homingo Discord whether pre-existing work is allowed.
 5. Start with five sites. Expand toward twenty only if authorization, labelling and caching stay manageable.
 
+What the registry (`benchmark/sites.json`) checks, and what it cannot:
+
+- A host is a public host name with a dot and a non-numeric last label (for example `demo.example.org`). IP addresses
+  and local names are refused. The registry means https origins, so an explicit default port (`:443` or `:80`) is
+  refused: write the bare host, so one website is never counted twice. The file must be committed and unmodified.
+- A `permission` site needs a `permission_note` of at least ten characters and three words. For an after run the note
+  must say that you have **permission** to **change** or **deploy**, and must not say the opposite (for example "no
+  permission", "test only"). A site whose host or note mentions an employer site must say "employer" and "written".
+- The note is **your own attestation**. The tool cannot verify that the written permission exists; it only refuses a
+  note that plainly contradicts itself.
+
 ## Steps for one site
 
 All commands run from the repository root unless a `cd` is shown.

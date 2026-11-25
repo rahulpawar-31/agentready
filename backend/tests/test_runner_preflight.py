@@ -109,7 +109,7 @@ def test_each_registry_rule_reports_a_problem_and_never_raises(tmp_path, entry, 
 
 def test_a_valid_registry_loads_without_problems(tmp_path):
     entries = [site(), site("docs.example.net", owner_type="permission", verification="dns",
-                            permission_note="Written OK from the owner, 20 Nov, to test and deploy a change",
+                            permission_note="Written permission from the owner, 20 Nov, to test and deploy a change",
                             after_eligible=True, after_method="live"),
                site("before-only.example.com", after_eligible=False, after_method="")]
     sites, problems = load_sites(write_registry(tmp_path, {"version": 1, "sites": entries}))
@@ -256,7 +256,7 @@ def test_existing_results_block_unless_allowed(tmp_path):
     root = make_repo(tmp_path)
     d = root / "benchmark" / "results" / "before" / "demo.example.org"
     d.mkdir(parents=True)
-    (d / "main_info-1.json").write_text("{}")
+    valid_result(d / "main_info-1.json")
     r = run(root)
     assert statuses(r)[("results_dirs_free", "demo.example.org")] == "blocked"
     assert statuses(run(root, allow_existing=True))[("results_dirs_free", "demo.example.org")] == "warn"
@@ -265,12 +265,12 @@ def test_existing_results_block_unless_allowed(tmp_path):
     assert statuses(run(root))[("results_dirs_free", "demo.example.org")] == "ok"
     ad = root / "benchmark" / "results" / "after" / "demo.example.org"
     ad.mkdir(parents=True)
-    (ad / "docs_api-2.json").write_text("{}")
+    valid_result(ad / "docs_api-2.json")
     assert statuses(run(root))[("results_dirs_free", "demo.example.org")] == "blocked"
 
 
 def test_a_permission_site_gets_a_reminder_and_a_before_only_site_says_so(tmp_path):
-    entries = [site("p.example.org", owner_type="permission", permission_note="Written OK to test and deploy a change",
+    entries = [site("p.example.org", owner_type="permission", permission_note="Written permission to test and deploy a change",
                     after_eligible=True, after_method="live"),
                site("b.example.org", after_eligible=False, after_method="")]
     s = statuses(run(make_repo(tmp_path, sites=entries)))
@@ -353,3 +353,151 @@ def test_main_builds_its_default_dependencies_for_the_repository_it_was_given(tm
     root = make_repo(tmp_path)
     pf.main([], env={}, out=lambda s: None, repo_root=root)
     assert seen["root"] == root
+
+
+# Group D: registry and pre-flight hardening (review findings I7 and minors) ---------------------------------
+import subprocess
+
+from app.runner import cli as runner_cli
+from app.runner.labels import load_label
+
+
+def problems_of(tmp_path, entry):
+    return load_sites(write_registry(tmp_path, {"version": 1, "sites": [entry]}))
+
+
+def valid_result(path: Path, valid=True):
+    path.write_text(json.dumps({"result": {"valid": valid}}))
+
+
+def test_a_run_file_that_is_not_valid_does_not_count_as_a_result(tmp_path):
+    root = make_repo(tmp_path)
+    d = root / "benchmark" / "results" / "before" / "demo.example.org"
+    d.mkdir(parents=True)
+    valid_result(d / "main_info-1.json", valid=False)                      # an invalid run that was not moved aside
+    (d / "docs_api-1.json").write_text("{not json")
+    assert statuses(run(root))[("results_dirs_free", "demo.example.org")] == "ok"
+    valid_result(d / "contact_form-1.json", valid=True)
+    r = run(root)
+    assert statuses(r)[("results_dirs_free", "demo.example.org")] == "blocked"
+    text = pf.to_text(r)
+    assert "never overwritten" in text and "new snapshot name" in text and "--allow-existing" in text
+
+
+@pytest.mark.parametrize("port", [":443", ":80"])
+def test_an_explicit_default_port_is_refused_so_one_website_is_never_counted_twice(tmp_path, port):
+    entries = [site("demo.example.org"), site("demo.example.org" + port, label=f"demo.example.org_{port[1:]}.json")]
+    sites, problems = load_sites(write_registry(tmp_path, {"version": 1, "sites": entries}))
+    assert [s.host for s in sites] == ["demo.example.org"]
+    assert any("default port" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("host", ["example", "2130706433", "0x7f.1", "1.2.3.4.5", "8.8.8.8", "a.b.123", "-bad.example.org",
+                                  "bad-.example.org", "a..example.org", "example.org."])
+def test_host_names_must_be_real_public_names_with_a_non_numeric_last_label(tmp_path, host):
+    sites, problems = problems_of(tmp_path, site(host, label=f"{host}.json", verification="meta"))
+    assert sites == [] and any("host" in p for p in problems), (host, problems)
+
+
+def test_ip_literals_are_refused_for_benchmark_sites_and_the_message_says_so(tmp_path):
+    _, problems = problems_of(tmp_path, site("8.8.8.8", label="8.8.8.8.json"))
+    assert any("IP address" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("note", ["xxxxxxxxxx", "ok ok", "Written OK from the owner", ""])
+def test_a_permission_note_needs_ten_characters_and_three_words(tmp_path, note):
+    _, problems = problems_of(tmp_path, site(owner_type="permission", permission_note=note, after_eligible=False,
+                                             after_method=""))
+    if note == "Written OK from the owner":
+        assert problems == []
+    else:
+        assert any("permission_note" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("note,accepted", [
+    ("Written permission from the owner to change and deploy the site", True),
+    ("Email: permission granted to deploy a change on the staging copy", True),
+    ("I may change this", False),
+    ("no permission to change or deploy", False),
+    ("They have not permitted any change or deploy", False),
+    ("without permission to change anything", False),
+    ("permission denied to change or deploy the site", False),
+    ("we do not have permission to change the site", False),
+    ("exchange rate permission note here", False),
+    ("permission to test only, nothing to deploy here", False),
+])
+def test_after_eligible_permission_sites_need_affirmative_permission_to_change_or_deploy(tmp_path, note, accepted):
+    sites, problems = problems_of(tmp_path, site(owner_type="permission", permission_note=note, after_eligible=True,
+                                                 after_method="staging"))
+    assert (problems == [] and len(sites) == 1) == accepted, (note, problems)
+
+
+@pytest.mark.parametrize("owner,note,accepted", [
+    ("permission", "Written permission from my employer to change and deploy the site", True),
+    ("permission", "Written permission from the owner to change and deploy the site", False),   # no word "employer"
+    ("permission", "Employer said yes by chat, permission to change and deploy", False),          # no word "written"
+    ("team", "", False),
+    ("team", "Employer written OK recorded in the shared drive folder", True),
+])
+def test_employer_sites_need_the_employers_written_ok_in_the_note(tmp_path, owner, note, accepted):
+    entry = site("countrystatecity.example.org", owner_type=owner, permission_note=note,
+                 label="countrystatecity.example.org.json", after_eligible=(owner == "permission"),
+                 after_method="staging" if owner == "permission" else "")
+    sites, problems = problems_of(tmp_path, entry)
+    assert (problems == [] and len(sites) == 1) == accepted, (note, problems)
+    other = site("www.MakeMySiteLive.example.org".lower(), owner_type="team", permission_note="",
+                 label="www.makemysitelive.example.org.json", after_eligible=False, after_method="")
+    assert any("employer" in p for p in problems_of(tmp_path, other)[1])
+
+
+@pytest.mark.parametrize("version", [True, 1.0, "1", None, 2])
+def test_the_registry_version_must_be_the_integer_one(tmp_path, version):
+    sites, problems = load_sites(write_registry(tmp_path, {"version": version, "sites": [site()]}))
+    assert sites == [] and any("version" in p for p in problems)
+
+
+def test_notes_must_be_text(tmp_path):
+    _, problems = problems_of(tmp_path, site(notes={"a": 1}))
+    assert any("notes" in p for p in problems)
+
+
+def test_the_registry_file_must_be_committed_and_unmodified(tmp_path):
+    root = make_repo(tmp_path)
+    r = run(root, Fakes(committed={"sites.json": ["benchmark/sites.json has uncommitted changes"]}))
+    assert statuses(r)[("sites_registry", "")] == "blocked" and r.blocked
+    assert "uncommitted" in pf.to_text(r)
+    assert statuses(run(root))[("sites_registry", "")] == "ok"
+
+
+def test_a_missing_git_is_a_clean_blocked_check_not_a_traceback(tmp_path):
+    root = make_repo(tmp_path)
+    fakes = Fakes()
+    real = fakes.deps()
+    boom = Deps(committed=lambda paths: (_ for _ in ()).throw(FileNotFoundError("git")),
+                sdk_installed=real.sdk_installed, verify=real.verify)
+    r = run_preflight(root, {"ANTHROPIC_API_KEY": SECRET_KEY}, boom)
+    s = statuses(r)
+    assert s[("criteria_committed", "")] == "blocked" and r.blocked
+    assert "git" in pf.to_text(r).lower() and "Traceback" not in pf.to_text(r)
+
+
+def test_git_problems_reports_git_missing_instead_of_raising(tmp_path, monkeypatch):
+    f = tmp_path / "x.json"
+    f.write_text("{}")
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    problems = runner_cli.git_problems([f], repo_root=tmp_path)
+    assert len(problems) == 1 and "git" in problems[0].lower() and "could not be run" in problems[0]
+    assert runner_cli.git_head(tmp_path) == ""
+
+
+def test_deeply_nested_json_is_a_refusal_not_a_crash_in_the_label_and_criteria_readers(tmp_path):
+    label = tmp_path / "x.test.json"
+    label.write_text("[" * 200000)
+    with pytest.raises(ValueError):
+        load_label(label, check_name=True)
+    criteria = tmp_path / "criteria.json"
+    criteria.write_text("[" * 200000)
+    with pytest.raises(ValueError):
+        runner_cli.load_criteria(criteria)

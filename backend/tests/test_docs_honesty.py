@@ -201,3 +201,9 @@ def test_the_benchmark_doc_covers_audit_accuracy_and_the_reserved_snapshot_name(
         assert needle.lower() in text.lower(), needle
     assert "no hand-labelled expected outcomes" not in text.lower()
     assert "new file name" in text.lower()               # a report already committed cannot be overwritten in place
+
+
+def test_the_benchmark_doc_states_the_registry_rules_and_that_the_note_is_an_attestation():
+    text = read(REPO / "docs" / "benchmark.md").lower()
+    for needle in ("attestation", "default port", "ip addresses", "three words", "employer", "unmodified"):
+        assert needle in text, needle
