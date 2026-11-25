@@ -12,6 +12,7 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 - [ ] Ask in the Homingo Discord whether pre-existing work is allowed.
 - [ ] Write each site's label by hand and commit it (`benchmark/labels/<host>.json`), then commit `benchmark/criteria.json` if it changed. Do this before any run.
 - [ ] Register the sites in `benchmark/sites.json` and run `python -m app.runner.preflight --check-control` until nothing is blocked.
+- [ ] Optional, for audit-check accuracy: write `audit_checks` in each label **before** looking at any audit of that site, commit it, then run `python -m app.runner.audit_cli` for `before` and `after` (see [benchmark.md](benchmark.md)). Without it the report says "not measured".
 - [ ] Run the before runs, the fixes and deploys, the after runs, and the report. See [benchmark.md](benchmark.md).
 - [ ] Commit the results under `benchmark/results/` and the report (`benchmark/evaluation.md`, `benchmark/evaluation.json`).
 - [ ] Record the 3-minute video following [demo-script.md](demo-script.md).

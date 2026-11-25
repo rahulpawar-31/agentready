@@ -1,5 +1,5 @@
 {
-  "_comment": "An example of the registry format. The hosts are reserved example names, not real sites. Copy entries into benchmark/sites.json, one per benchmark site. owner_type is team (the team controls the site) or permission (written permission is on file: say where in permission_note; for an after run the note must record permission to change or deploy). verification is dns or meta (dns is not available for a host with a port). label is the file in benchmark/labels named after the host. after_eligible is true only for a site whose owner will deploy the approved files; after_method is then staging or live.",
+  "_comment": "An example of the registry format. The hosts are reserved example names, not real sites. Copy entries into benchmark/sites.json, one per benchmark site. owner_type is team (the team controls the site) or permission (written permission is on file: say where in permission_note; for an after run the note must say that you have permission to change or deploy, and it is your own attestation: the tool does not verify it). verification is dns or meta (dns is not available for a host with a port). label is the file in benchmark/labels named after the host. after_eligible is true only for a site whose owner will deploy the approved files; after_method is then staging or live.",
   "version": 1,
   "sites": [
     {
@@ -19,7 +19,7 @@
       "label": "docs.example.net.json",
       "after_eligible": true,
       "after_method": "live",
-      "permission_note": "Written OK from the site owner (email of 20 Nov, kept by the team) to test and to deploy a change.",
+      "permission_note": "Written permission from the site owner (email of 20 Nov, kept by the team) to test and to change or deploy.",
       "notes": "Run with the owner's permission; the owner deploys the approved files."
     },
     {

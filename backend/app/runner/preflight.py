@@ -11,15 +11,16 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from ..audit import SiteRef, parse_url
 from ..fetch import is_public
-from .cli import SNAPSHOT, git_problems, load_criteria
+from .cli import GIT_MISSING, SNAPSHOT, git_problems, load_criteria
 from .labels import load_label
-from .results import run_path
+from .results import is_valid_result, run_path, valid_snapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_SITES = 20
@@ -31,6 +32,12 @@ ENTRY_KEYS = {"host", "owner_type", "verification", "label", "after_eligible", "
               "notes", "_comment"}
 LABEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.json$")
 PRIVATE_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home.arpa")
+DEFAULT_PORTS = (80, 443)          # the registry means https origins: the bare host is the only canonical spelling
+EMPLOYER_SITES = re.compile(r"countrystatecity|makemysitelive", re.I)
+# The permission note is the owner's own attestation. These checks only refuse a note that plainly says the opposite.
+NEGATED_PERMISSION = re.compile(
+    r"\b(no permission|not permitted|without permission|denied|refused|do not have|don't have|not allowed|"
+    r"no written|test only|only (to )?test|nothing to (change|deploy)|no (change|deploy))\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -98,8 +105,16 @@ def _site_problems(entry: dict, index: int) -> tuple[Site | None, list[str]]:
         name = ref.hostname
         if name == "localhost" or name.endswith(PRIVATE_SUFFIXES):
             problems.append(f"{where}: host {name} is not a public name and cannot be audited")
-        if ref.is_ip and not is_public(name):
-            problems.append(f"{where}: host {name} is not a public address and cannot be audited")
+        if ref.is_ip:
+            problems.append(f"{where}: IP addresses are not accepted for benchmark sites; register the public host name")
+        else:
+            last = name.rsplit(".", 1)[-1]
+            if "." not in name or not re.search(r"[a-z]", last) or re.fullmatch(r"0x[0-9a-f]+", last):
+                problems.append(f"{where}: host {name} must be a public host name with a dot and a non-numeric last "
+                                f"label, for example demo.example.org")
+        if ref.port in DEFAULT_PORTS:
+            problems.append(f"{where}: remove the default port: the registry means https origins, so write the bare "
+                            f"host (or a non-default port)")
     owner = entry.get("owner_type")
     if owner not in OWNER_TYPES:
         problems.append(f"{where}: owner_type must be one of {', '.join(OWNER_TYPES)}")
@@ -112,8 +127,15 @@ def _site_problems(entry: dict, index: int) -> tuple[Site | None, list[str]]:
     if not isinstance(note, str):
         problems.append(f"{where}: permission_note must be a string")
         note = ""
-    if owner == "permission" and len(note.strip()) < 10:
-        problems.append(f"{where}: a permission site needs a permission_note (at least 10 characters) pointing to the written OK")
+    if "notes" in entry and not isinstance(entry["notes"], str):
+        problems.append(f"{where}: notes must be text")
+    if owner == "permission" and (len(note.strip()) < 10 or len(re.findall(r"\w+", note)) < 3):
+        problems.append(f"{where}: a permission site needs a permission_note (at least 10 characters and 3 words) "
+                        f"pointing to the written OK")
+    if (EMPLOYER_SITES.search(host) or EMPLOYER_SITES.search(note)) and not (
+            re.search(r"\bemployer\b", note, re.I) and re.search(r"\bwritten\b", note, re.I)):
+        problems.append(f"{where}: an employer site (CountryStateCity or MakeMySiteLive) needs a permission_note that "
+                        f"records the employer's written OK (the words \"employer\" and \"written\")")
     label = entry.get("label")
     expected_label = f"{_slug(host)}.json"
     if not isinstance(label, str) or not LABEL_NAME.match(label) or ".." in label:
@@ -129,9 +151,12 @@ def _site_problems(entry: dict, index: int) -> tuple[Site | None, list[str]]:
         problems.append(f"{where}: after_method must be staging or live when after_eligible is true")
     if not eligible and method not in ("",) + AFTER_METHODS:
         problems.append(f"{where}: after_method must be staging or live")
-    if eligible and owner == "permission" and not re.search(r"\b(change|deploy)", note, re.I):
+    if eligible and owner == "permission" and not (
+            re.search(r"\bpermission\b", note, re.I) and re.search(r"\b(change|deploy)\w*", note, re.I)
+            and not NEGATED_PERMISSION.search(note)):
         problems.append(f"{where}: after_eligible for a permission site needs a permission_note that records "
-                        f"permission to change or deploy, not only to test")
+                        f"permission to change or deploy, not only to test (the note is your own attestation; "
+                        f"it is not verified)")
     if problems:
         return None, problems
     return Site(host, owner, verification, label, eligible, method, note.strip(), str(entry.get("notes") or "")), []
@@ -145,7 +170,7 @@ def load_sites(path) -> tuple[list[Site], list[str]]:
         return [], ["the site registry could not be read as JSON"]
     if not isinstance(data, dict):
         return [], ["the site registry must be a JSON object"]
-    if data.get("version") != 1:
+    if type(data.get("version")) is not int or data.get("version") != 1:
         return [], ["the site registry needs \"version\": 1"]
     entries = data.get("sites")
     if not isinstance(entries, list):
@@ -173,10 +198,21 @@ def load_sites(path) -> tuple[list[Site], list[str]]:
 
 
 def _result_files(results: Path, snapshot: str, host: str) -> list[Path]:
+    """Files that record a VALID run. Moved-aside runs (.invalid-<k>) and files that record an invalid run do not
+    count: those are exactly what a rerun in the same snapshot redoes."""
     directory = run_path(results, snapshot, host, "x", 1).parent
     if not directory.is_dir():
         return []
-    return [p for p in sorted(directory.glob("*.json")) if ".invalid-" not in p.name]
+    return [p for p in sorted(directory.glob("*.json"))
+            if ".invalid-" not in p.name and not p.is_symlink() and is_valid_result(p)]
+
+
+def _committed(deps, paths) -> list[str]:
+    """deps.committed, but a missing git is one blocked message and not a traceback."""
+    try:
+        return list(deps.committed(paths))
+    except (OSError, subprocess.SubprocessError):
+        return [GIT_MISSING]
 
 
 def run_preflight(repo_root, env, deps: Deps, *, check_control: bool = False, before: str = "before",
@@ -189,7 +225,7 @@ def run_preflight(repo_root, env, deps: Deps, *, check_control: bool = False, be
         result.checks.append(Check(check_id, status, _short(message, 300), site))
 
     criteria = bench / "criteria.json"
-    problems = deps.committed([criteria])
+    problems = _committed(deps, [criteria])
     add("criteria_committed", "blocked" if problems else "ok",
         "; ".join(problems) if problems else "benchmark/criteria.json is committed and unmodified")
     try:
@@ -208,6 +244,7 @@ def run_preflight(repo_root, env, deps: Deps, *, check_control: bool = False, be
         add("sdk_installed", "blocked", "the anthropic SDK is not installed; run: pip install -e '.[runner]'")
 
     sites, registry_problems = load_sites(bench / "sites.json")
+    registry_problems = registry_problems + _committed(deps, [bench / "sites.json"])
     if registry_problems:
         add("sites_registry", "blocked", "; ".join(registry_problems[:5]) +
             (f" (+{len(registry_problems) - 5} more)" if len(registry_problems) > 5 else ""))
@@ -234,7 +271,7 @@ def run_preflight(repo_root, env, deps: Deps, *, check_control: bool = False, be
         else:
             try:
                 label = load_label(label_path, check_name=True)
-                committed = deps.committed([label_path])
+                committed = _committed(deps, [label_path])
                 if committed:
                     add("label_valid_and_committed", "blocked", "; ".join(committed), site.host)
                 else:
@@ -271,8 +308,10 @@ def run_preflight(repo_root, env, deps: Deps, *, check_control: bool = False, be
                 add("results_dirs_free", "warn", f"snapshot '{snapshot}' already holds {len(existing)} valid result(s); "
                     f"they are kept and only missing runs are made", site.host)
             elif existing:
-                add("results_dirs_free", "blocked", f"snapshot '{snapshot}' already holds {len(existing)} valid result(s); "
-                    f"use another snapshot name or pass --allow-existing", site.host)
+                add("results_dirs_free", "blocked", f"snapshot '{snapshot}' already holds {len(existing)} valid result(s) "
+                    f"for this site. Valid results are never overwritten, so a rerun only makes the missing or invalid "
+                    f"runs: pass --allow-existing to continue this snapshot, or use a new snapshot name for a new "
+                    f"measurement", site.host)
         if not any(c.id == "results_dirs_free" and c.site == site.host for c in result.checks):
             add("results_dirs_free", "ok", "no earlier results in the planned snapshots", site.host)
 
@@ -330,7 +369,7 @@ def main(argv=None, deps: Deps | None = None, env=None, out=print, repo_root=REP
     parser.add_argument("--allow-existing", action="store_true")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args(argv)
-    if not SNAPSHOT.fullmatch(args.snapshot_before) or not SNAPSHOT.fullmatch(args.snapshot_after):
+    if not valid_snapshot(args.snapshot_before) or not valid_snapshot(args.snapshot_after):
         parser.error("snapshot names must match [A-Za-z0-9_-]{1,64}")
     if args.snapshot_before.casefold() == args.snapshot_after.casefold():
         parser.error("--snapshot-before and --snapshot-after must differ")

@@ -14,6 +14,7 @@ from .agent import run_task
 from .labels import load_label
 from .llm import DEFAULT_MODEL, AnthropicClient, LLMClient
 from .results import (config_dict, guard_settings, harness_sha256, is_valid_result, move_aside, run_path,
+                      valid_snapshot,
                       save_run)
 from .tasks import MAX_TURNS, STEP_LIMIT, TASK_IDS, TASKS, TOOLSET_VERSION
 
@@ -34,8 +35,15 @@ class Deps:
     git_head: Callable[[], str] = lambda: ""         # the commit the criteria and label were checked against
 
 
+GIT_MISSING = "git could not be run (is git installed and on PATH?)"
+
+
 def _git(repo_root, *args) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "--literal-pathspecs", "-C", str(repo_root), *args], capture_output=True, text=True)
+    cmd = ["git", "--literal-pathspecs", "-C", str(repo_root), *args]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except OSError:                       # git is not installed or not on PATH: return code 127, as a shell would
+        return subprocess.CompletedProcess(cmd, 127, "", GIT_MISSING)
 
 
 def git_head(repo_root=REPO_ROOT) -> str:
@@ -52,6 +60,9 @@ def git_problems(paths, repo_root=REPO_ROOT) -> list[str]:
         rel = os.path.relpath(p, repo_root)
         name = f"{Path(p).name} (outside the repository)" if rel.startswith("..") else rel
         staged = _git(repo_root, "ls-files", "-s", "--", rel)
+        if staged.returncode == 127:
+            problems.append(GIT_MISSING)
+            continue
         entry = staged.stdout.split() if staged.returncode == 0 else []
         if not entry:
             problems.append(f"{name} is not committed")
@@ -73,13 +84,27 @@ def load_criteria(path) -> tuple[dict, str]:
     try:
         raw = Path(path).read_bytes()
         data = json.loads(raw)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         raise ValueError("The criteria file could not be read as JSON")
     for key, expected in (("toolset_version", TOOLSET_VERSION), ("step_limit", STEP_LIMIT), ("max_turns", MAX_TURNS),
                           ("harness_sha256", harness_sha256())):
         if not isinstance(data, dict) or data.get(key) != expected:
             raise ValueError(f"The criteria file's {key} does not match the code ({expected!r})")
     return data, hashlib.sha256(raw).hexdigest()
+
+
+SECRET_MISSING = ("Refused: AGENTREADY_SECRET is not set. Export the same value the API server uses (the ownership "
+                  "token is derived from it), in this shell, then run the command again. See docs/benchmark.md.")
+
+
+def build_default_deps(out=print) -> "Deps | None":
+    """default_deps(), but a missing AGENTREADY_SECRET is a one-sentence refusal instead of a traceback. Returns None
+    after printing the refusal."""
+    try:
+        return default_deps()
+    except RuntimeError as exc:
+        out(SECRET_MISSING if "AGENTREADY_SECRET" in str(exc) else f"Refused: could not set up ({type(exc).__name__}).")
+        return None
 
 
 def default_deps() -> Deps:
@@ -112,8 +137,8 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
     r.add_argument("--allow-uncommitted", action="store_true")
     args = ap.parse_args(argv)
 
-    if not SNAPSHOT.match(args.snapshot):
-        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64}.")
+    if not valid_snapshot(args.snapshot):
+        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64} and may not be 'audits' (reserved).")
         return 2
     tasks = list(dict.fromkeys(t for t in args.tasks.split(",") if t))        # no duplicates, order kept
     if not tasks or any(t not in TASKS for t in tasks):
@@ -128,7 +153,9 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
     except ValueError as e:
         out(f"Refused: {e}")
         return 2
-    deps = deps or default_deps()
+    deps = deps or build_default_deps(out)
+    if deps is None:
+        return 2
     if not args.allow_uncommitted:
         problems = deps.committed([Path(args.criteria), Path(args.label)])
         if problems:

@@ -162,7 +162,7 @@ def _task_label(task_id: str, raw, origin: str) -> TaskLabel:
 def load_label(path, check_name: bool = False) -> SiteLabel:
     try:
         data = json.loads(Path(path).read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):        # RecursionError: a hostile, deeply nested file
         raise ValueError("The label file could not be read as JSON")
     if not isinstance(data, dict) or not isinstance(data.get("site"), str):
         raise ValueError("The label needs a 'site' URL")

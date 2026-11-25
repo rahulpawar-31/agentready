@@ -19,8 +19,14 @@ safely act on a site, and it says nothing about sites that were not tested. The 
 `benchmark/criteria.json`, which is pre-registered: the runner refuses to start unless it is committed and unmodified.
 
 Not counted: the OpenAPI-to-MCP stub (FR-6.4). It is validated and can be shown in the demo, but the runner has no MCP
-client for it, so the results table excludes it. Audit-check accuracy is **not measured** either, because there are no
-hand-labelled expected outcomes for the audit checks; the report says so and never infers them from task results.
+client for it, so the results table excludes it.
+
+Audit-check accuracy is a **separate** measurement and only exists for a site whose label carries `audit_checks` (the
+owner's own expected pass or fail for each of the 13 checks, written and committed **before** looking at any audit of
+that site) and that has a saved audit made with the `audit_cli` command (step 10). Without those the report says
+"not measured" and prints no percentage; it never infers expected outcomes from task results. Those rates describe how
+well the static-HTML checks agreed with the owner's own labels on the sites tested, with the sample size printed next to
+them, and are not a measure of agent performance. The owner's labels are not verified by the tool: write them first.
 
 ## Which sites may be used
 
@@ -34,9 +40,27 @@ hand-labelled expected outcomes for the audit checks; the report says so and nev
    `permission_note`. Ask in the Homingo Discord whether pre-existing work is allowed.
 5. Start with five sites. Expand toward twenty only if authorization, labelling and caching stay manageable.
 
+What the registry (`benchmark/sites.json`) checks, and what it cannot:
+
+- A host is a public host name with a dot and a non-numeric last label (for example `demo.example.org`). IP addresses
+  and local names are refused. The registry means https origins, so an explicit default port (`:443` or `:80`) is
+  refused: write the bare host, so one website is never counted twice. The file must be committed and unmodified.
+- A `permission` site needs a `permission_note` of at least ten characters and three words. For an after run the note
+  must say that you have **permission** to **change** or **deploy**, and must not say the opposite (for example "no
+  permission", "test only"). A site whose host or note mentions an employer site must say "employer" and "written".
+- The note is **your own attestation**. The tool cannot verify that the written permission exists; it only refuses a
+  note that plainly contradicts itself.
+
 ## Steps for one site
 
 All commands run from the repository root unless a `cd` is shown.
+
+**Environment.** Run the API server (step 3) in a **separate shell** from the runner commands. Every block that runs
+`app.runner.cli run`, `app.runner.preflight` or `app.runner.audit_cli` below repeats its exports, because a fresh shell
+does not have them: `AGENTREADY_SECRET` must be the **same value** the API server was started with (the ownership
+token is derived from it), and `ANTHROPIC_API_KEY` is your own key. Without `AGENTREADY_SECRET` the commands stop with
+one sentence naming it (exit code 2) and make no request. Snapshot names must match `[A-Za-z0-9_-]{1,64}`, and
+`audits` is reserved (the audit reports live in `benchmark/results/audits/`).
 
 1. **Register the site** in `benchmark/sites.json` (see `benchmark/sites.example.json`). The file starts empty.
 2. **Write the label** by hand after looking at the site yourself: `benchmark/labels/<host>.json`, format in
@@ -52,15 +76,20 @@ All commands run from the repository root unless a `cd` is shown.
 4. **Run the pre-flight**. It lists exactly what is still missing and never prints a secret.
 
        cd backend
+       export AGENTREADY_SECRET=<the same value the API server uses>
        export ANTHROPIC_API_KEY=...       # never commit it
        pip install -e '.[runner]'
        python -m app.runner.preflight                    # offline: makes no network request
        python -m app.runner.preflight --check-control    # also verifies ownership of each listed site
 
-   Exit code 0 means nothing blocks the run. Warnings (for example "1 of the target 5 sites") need a look.
+   Exit code 0 means nothing blocks the run. Warnings (for example that fewer than the target five sites are
+   registered) need a look.
 5. **Before runs**, three repeats:
 
-       cd backend && python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot before --repeats 3
+       cd backend
+       export AGENTREADY_SECRET=<the same value the API server uses>
+       export ANTHROPIC_API_KEY=...
+       python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot before --repeats 3
 
    A run whose model call failed or whose tools broke is marked **invalid**, kept, and rerun with the same command
    (valid results are never overwritten). Invalid runs are reported separately and never counted as failures.
@@ -71,19 +100,36 @@ All commands run from the repository root unless a `cd` is shown.
    fresh pages", or `POST /audit` with `"snapshot": "after"`) to see the new score.
 9. **After runs**, only for sites that are `after_eligible`, with a different snapshot name so the cache is cold:
 
-       cd backend && python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot after --repeats 3
+       cd backend
+       export AGENTREADY_SECRET=<the same value the API server uses>
+       export ANTHROPIC_API_KEY=...
+       python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot after --repeats 3
 
    The audit and the runner keep their cached pages in the same place for the same snapshot name. If you re-audited with
    `"snapshot": "after"` (step 8) after the deploy, the after runs reuse those pages; with any other snapshot name
    (such as the page's `rerun-...` names) the runner fetches its own. Either way, only create the `after` cache after
    the new files are live, because a cached page is never refetched inside its snapshot. Use the same label, the same
    model and the same limits as the before runs (they are recorded and compared).
-10. **Report**, written outside `benchmark/results/` (the command refuses to write inside it, because a report saved there
+10. **Audit accuracy (optional)**, only for a site whose committed label carries `audit_checks` (see
+    `benchmark/labels/README.md`). Run one audit per site and snapshot, once for `before` and once for `after`:
+
+        cd backend
+        export AGENTREADY_SECRET=<the same value the API server uses>
+        python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot before
+        python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot after
+
+    The command proves control first, uses the same guard as the API, records the findings immutably in
+    `benchmark/results/audits/<snapshot>/<host>.json` and never overwrites one.
+11. **Report**, written outside `benchmark/results/` (the command refuses to write inside it, because a report saved there
     would be read back as a result):
 
         cd backend
         python -m app.runner.report --before before --after after --output ../benchmark/evaluation.md
         python -m app.runner.report --before before --after after --format json --output ../benchmark/evaluation.json
+
+    The report command never creates directories, never overwrites a file it did not write, and never overwrites a file
+    that git tracks. After you commit a report, write the next one to a **new file name** (for example
+    `evaluation-2.md`) or remove the old file from git first.
 
 ## What the report shows
 
@@ -107,8 +153,9 @@ sites or 30 site-task cells stand behind the results it says "Small sample: trea
 
 ## Cost and time
 
-Model calls are about: sites x 3 tasks x repeats, once for the before snapshot and once more for each after-eligible
-site. Each run is limited to 10 page fetches and 24 model turns. Check your own provider pricing; no price is assumed here.
+Counting runs: runs = sites x 3 tasks x repeats for the before snapshot, plus the same for each after-eligible site.
+Each run makes up to 24 model calls (the turn limit `max_turns`; a run ends earlier when the agent answers) and up to 10
+page fetches, so the number of model calls is at most 24 times the number of runs. Check your own provider pricing; no price is assumed here.
 The guard allows one request per half second and at most 60 requests per run.
 
 ## If something goes wrong

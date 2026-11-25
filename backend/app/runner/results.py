@@ -9,6 +9,17 @@ from . import judge, llm, tasks, tools
 from .agent import RunResult
 
 
+SNAPSHOT_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+RESERVED_SNAPSHOTS = frozenset({"audits"})      # results/audits/ holds the audit reports, never a task snapshot
+
+
+def valid_snapshot(name) -> bool:
+    """A snapshot name the whole toolchain accepts: the server's pattern (fullmatch: no trailing newline) and not a
+    reserved directory name (compared case-insensitively, because macOS and Windows file systems are)."""
+    return (isinstance(name, str) and SNAPSHOT_PATTERN.fullmatch(name) is not None
+            and name.casefold() not in RESERVED_SNAPSHOTS)
+
+
 def harness_sha256() -> str:
     """A hash of everything that shapes what the model sees and what counts as a result: the tool
     definitions and limits, the system prompt, the task wording, the judge's quote minimum, the

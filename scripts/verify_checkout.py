@@ -14,7 +14,15 @@ Steps (the first failure stops the run and the rest are reported as SKIP):
   7. the clone is still clean after all that, and no generated or secret file is tracked.
 
 Everything happens under a temporary directory that is removed at the end (--keep keeps it). The working repository is
-never modified. The only network use is `git clone` of the chosen source and `pip install`. POSIX only.
+never modified. The only network use is `git clone` of the chosen source, `git ls-remote` of the remote that is being
+compared with, and `pip install`. POSIX only.
+
+Safety of the arguments: the source and ref are refused when they start with '-', contain '::' (git transport helpers
+such as ext:: and fd::) or control characters, or (for the ref) anything outside letters, digits and ._/@+-. Git runs
+with `--` separators and only the https, ssh and file protocols allowed. Credentials inside a URL are removed from
+everything that is printed. The clone must be at the commit being verified (the default: your HEAD, which the remote
+must hold, asked with `git ls-remote`, not read from a possibly stale local tracking ref), and the server child must be
+alive before and after the smoke checks, so a different process answering on the port cannot make the run pass.
 """
 import argparse
 import glob
@@ -40,8 +48,14 @@ INITIALIZE_PARAMS = {"protocolVersion": "2025-06-18", "capabilities": {},
                      "clientInfo": {"name": "verify-checkout", "version": "1"}}
 EXPECTED_TOOLS = {"audit_site", "get_report", "propose_fixes"}
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+PROTOCOL_FLAGS = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.file.allow=user",
+                  "-c", "protocol.ssh.allow=always"]
+REF_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@+-]*$")
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+CLONE_TIMEOUT = 300
 TRACKED_BAD = (re.compile(r"(^|/)__pycache__/"), re.compile(r"(^|/)\.venv/"), re.compile(r"(^|/)\.cache/"),
-               re.compile(r"(^|/)\.env$"), re.compile(r"\.egg-info/"),
+               re.compile(r"(^|/)\.env(\.(?!example$|sample$|template$)[^/]+)?$"), re.compile(r"\.pem$"),
+               re.compile(r"(^|/)id_(rsa|ed25519|ecdsa|dsa)"), re.compile(r"\.egg-info/"),
                re.compile(r"^benchmark/results/.*/\.[^/]*\.tmp$"))        # a leftover temp file from an interrupted write
 
 
@@ -73,7 +87,8 @@ def default_source(repo_root: Path, git) -> str:
 
 
 def pushed_problem(git) -> str | None:
-    """A reason the clone would not contain what the working tree has, or None."""
+    """A reason the clone would not contain what the working tree has, or None. The REMOTE is asked (git ls-remote):
+    a local remote-tracking ref can be stale after a force-push."""
     rc, status = git("status", "--porcelain")
     if rc != 0:
         return "git status failed: is this a git repository?"
@@ -86,17 +101,60 @@ def pushed_problem(git) -> str | None:
     if branch == "HEAD":
         rc3, containing = git("branch", "-r", "--contains", "HEAD")
         return None if rc3 == 0 and containing else "HEAD is not pushed to any remote branch"
-    rc4, remote = git("rev-parse", f"origin/{branch}")
-    if rc4 != 0 or not remote:
-        return f"the branch is not pushed: origin/{branch} does not exist locally (git push first)"
+    rc4, line = git("ls-remote", "--heads", "origin", f"refs/heads/{branch}")
+    if rc4 != 0:
+        return ("the branch is not pushed, or the remote 'origin' could not be read (git ls-remote failed): "
+                "push it and check the network")
+    remote = line.split()[0] if line.strip() else ""
+    if not remote:
+        return f"the branch is not pushed: origin has no branch {branch} (git push first)"
     if remote != head:
         return f"HEAD is not pushed: origin/{branch} is at {remote[:10]} but HEAD is at {head[:10]}"
     return None
 
 
+def argument_problem(source: str, ref: str) -> str | None:
+    """Refuse a source or ref that git could read as an option or a transport helper."""
+    if not isinstance(source, str) or not source.strip():
+        return "the source is empty"
+    if source.startswith("-"):
+        return "the source must not start with '-' (git would read it as an option)"
+    if "::" in source:
+        return "the source must not use a transport helper such as ext:: or fd::"
+    if any(ord(c) < 32 or ord(c) == 127 for c in source):
+        return "the source must not contain control characters"
+    if not isinstance(ref, str) or not REF_OK.match(ref) or ".." in ref:
+        return "the ref may only contain letters, digits and ._/@+- and must not start with '-' or contain '..'"
+    return None
+
+
+def safe_url(text: str) -> str:
+    """Remove credentials from any URL inside `text` (user:token@host)."""
+    return re.sub(r"(?i)\b(https?|ssh|git)://[^/@\s'\"]+@", r"\1://", str(text))
+
+
+def expected_sha(git, source: str, ref: str, local_head: str, explicit: bool) -> str | None:
+    """The commit the clone must be at, or None when it cannot be known (then nothing is compared)."""
+    if not explicit:
+        return local_head
+    if FULL_SHA.match(ref):
+        return ref
+    rc, out = git("ls-remote", source, f"refs/heads/{ref}")
+    if rc == 0 and out.strip():
+        return out.split()[0]
+    return None
+
+
+def commit_problem(cloned: str, expected: str | None) -> str | None:
+    if expected is None or cloned == expected:
+        return None
+    return (f"the clone is at {cloned[:10]} but {expected[:10]} was expected "
+            f"(the remote moved on, or the ref resolves to a different commit)")
+
+
 def clone_commands(source: str, ref: str, dest: Path) -> list[list[str]]:
-    return [["git", "clone", "--no-hardlinks", source, str(dest)],
-            ["git", "-C", str(dest), "checkout", "--quiet", ref]]
+    return [["git", *PROTOCOL_FLAGS, "clone", "--no-hardlinks", "--", source, str(dest)],
+            ["git", "-C", str(dest), "checkout", "--quiet", ref, "--"]]
 
 
 def tracked_problems(files: list[str]) -> list[str]:
@@ -115,9 +173,23 @@ def pick_free_port() -> int:
         return s.getsockname()[1]
 
 
+def port_in_use(port: int) -> bool:
+    """True when something already accepts connections on 127.0.0.1:port."""
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+# The loopback checks must never go through a proxy from the environment (a false failure), so every request uses an
+# opener without proxy handlers.
+def loopback_opener():
+    """Built at call time (never at import), so that no proxy setting can reach it."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def wait_ready(url: str, timeout: float, get=None, sleep=time.sleep, clock=time.monotonic) -> bool:
     def default_get(u):
-        with urllib.request.urlopen(u, timeout=3) as r:
+        with loopback_opener().open(u, timeout=3) as r:
             return r.status
     get = get or default_get
     deadline = clock() + timeout
@@ -167,7 +239,7 @@ def real_http(base: str):
         req = urllib.request.Request(base + path, method=method, headers=headers or {},
                                      data=body.encode() if isinstance(body, str) else body)
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with loopback_opener().open(req, timeout=20) as r:
                 return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read().decode("utf-8", "replace")
@@ -266,6 +338,63 @@ def cmd_step(cmd, ok_detail: str | None = None, **kw) -> StepResult:
     return StepResult("FAIL", tail(output, lines=25, chars=400))
 
 
+def server_step(py: Path, backend: Path, cache_dir: Path, out=print, *, popen=subprocess.Popen,
+                free_port=pick_free_port, port_in_use=port_in_use, wait=wait_ready, smoke_run=None) -> StepResult:
+    """Start the real server on loopback, run the smoke checks, always stop it. The child must be alive before and after
+    the checks: a different process answering on the port must not make the run pass."""
+    port = free_port()
+    if port_in_use(port):
+        return StepResult("FAIL", f"something is already listening on 127.0.0.1:{port}; the checks would not be "
+                                  "talking to the server under test")
+    base = f"http://127.0.0.1:{port}"
+    smoke_run = smoke_run or (lambda b: smoke(real_http(b)))
+    proc = popen([str(py), "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
+                 cwd=backend, env=server_env(os.environ, cache_dir),
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        if not wait(f"{base}/ownership-token?domain=example.org", 60):
+            proc.terminate()
+            try:
+                log = proc.communicate(timeout=10)[0]
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                log = ""
+            return StepResult("FAIL", "the server did not become ready: " + tail(safe_url(log or ""), 10, 400))
+        code = proc.poll()
+        if code is not None:
+            return StepResult("FAIL", f"the server exited (code {code}) before the checks, so another process may be "
+                                      f"answering on the port")
+        results = smoke_run(base)
+        for name, ok, detail in results:
+            out(f"    {'ok  ' if ok else 'FAIL'} {name} ({detail})")
+        code = proc.poll()
+        if code is not None:
+            return StepResult("FAIL", f"the server exited (code {code}) during the checks, so the answers may have "
+                                      f"come from another process")
+        bad = [name for name, ok, _ in results if not ok]
+        return StepResult("FAIL", "failed: " + "; ".join(bad)) if bad else StepResult("PASS", f"{len(results)} checks")
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def clean_tree_step(git) -> StepResult:
+    """`git` is bound to the clone. Untracked files count as dirty (git status --porcelain lists them)."""
+    rc, status = git("status", "--porcelain")
+    if rc != 0:
+        return StepResult("FAIL", "git status failed in the clone")
+    if status:
+        return StepResult("FAIL", "the run left the clone dirty: " + tail(status, 6, 300))
+    rc, listing = git("ls-files")
+    bad = tracked_problems(listing.splitlines())
+    return StepResult("FAIL", "tracked generated or secret files: " + ", ".join(bad[:5])) if bad else \
+        StepResult("PASS", "the clone is clean and no generated or secret file is tracked")
+
+
 def build_steps(args, tmp: Path, git, out=print) -> list[Step]:
     checkout = tmp / "checkout"
     venv = tmp / "venv"
@@ -275,31 +404,46 @@ def build_steps(args, tmp: Path, git, out=print) -> list[Step]:
     source = args.source or default_source(REPO_ROOT, git)
     rc, branch = git("rev-parse", "--abbrev-ref", "HEAD")
     ref = args.ref or (branch if rc == 0 and branch != "HEAD" else git("rev-parse", "HEAD")[1])
+    explicit = explicit_source or bool(args.ref)
+    pip_timeout = getattr(args, "pip_timeout", 600)
+    test_timeout = getattr(args, "test_timeout", 900)
 
     def check_pushed():
-        if explicit_source or args.ref:
-            return StepResult("PASS", f"source {source}, ref {ref}: not checked (given explicitly)")
+        problem = argument_problem(source, ref)
+        if problem:
+            return StepResult("FAIL", problem)
+        if explicit:
+            return StepResult("PASS", f"source {safe_url(source)}, ref {ref}: not checked (given explicitly)")
         problem = pushed_problem(git)
-        return StepResult("FAIL", problem) if problem else StepResult("PASS", f"{ref} is pushed and the tree is clean")
+        return StepResult("FAIL", safe_url(problem)) if problem else StepResult("PASS", f"{ref} is pushed and the tree is clean")
 
     def clone():
         for cmd in clone_commands(source, ref, checkout):
-            rc, output = run_cmd(cmd)
+            rc, output = run_cmd(cmd, timeout=CLONE_TIMEOUT)
             if rc != 0:
-                return StepResult("FAIL", tail(output, 10, 400))
-        return StepResult("PASS", f"{source} @ {ref}")
+                return StepResult("FAIL", tail(safe_url(output), 10, 400))
+        rc, cloned = make_git(checkout)("rev-parse", "HEAD")
+        if rc != 0:
+            return StepResult("FAIL", "could not read the commit of the clone")
+        local_head = git("rev-parse", "HEAD")[1]
+        expected = expected_sha(git, source, ref, local_head, explicit)
+        problem = commit_problem(cloned, expected)
+        if problem:
+            return StepResult("FAIL", problem)
+        note = "" if expected is not None else " (not compared: the expected commit could not be determined)"
+        return StepResult("PASS", f"{safe_url(source)} @ {ref}, commit {cloned[:10]}{note}")
 
     def install():
-        rc, output = run_cmd([sys.executable, "-m", "venv", str(venv)])
+        rc, output = run_cmd([sys.executable, "-m", "venv", str(venv)], timeout=CLONE_TIMEOUT)
         if rc != 0:
             return StepResult("FAIL", tail(output, 10, 400))
         return cmd_step([str(py), "-m", "pip", "install", "-q", "-e", f"{backend}[dev,runner]"],
-                        ok_detail="installed backend[dev,runner] into a new virtual environment", timeout=1800)
+                        ok_detail="installed backend[dev,runner] into a new virtual environment", timeout=pip_timeout)
 
     def tests():
         env = {k: v for k, v in os.environ.items() if k not in ("AGENTREADY_LIVE", "ANTHROPIC_API_KEY", "AGENTREADY_SECRET")}
         env["AGENTREADY_DEV"] = "1"
-        return cmd_step([str(py), "-m", "pytest", "-q"], cwd=backend, env=env)
+        return cmd_step([str(py), "-m", "pytest", "-q"], cwd=backend, env=env, timeout=test_timeout)
 
     def node_tests():
         if args.skip_node:
@@ -309,61 +453,34 @@ def build_steps(args, tmp: Path, git, out=print) -> list[Step]:
         files = sorted(glob.glob(str(backend / "tests" / "ui" / "*.test.mjs")))
         if not files:
             return StepResult("FAIL", "no UI test files found in the clone")
-        rc, output = run_cmd(["node", "--test", *files], cwd=backend)
+        rc, output = run_cmd(["node", "--test", *files], cwd=backend, timeout=CLONE_TIMEOUT)
         summary = [line for line in output.splitlines() if line.startswith(("ℹ tests", "ℹ pass", "ℹ fail"))]
         return StepResult("PASS" if rc == 0 else "FAIL", " ".join(summary) if rc == 0 else tail(output, 25, 400))
 
     def server():
-        port = pick_free_port()
-        base = f"http://127.0.0.1:{port}"
-        proc = subprocess.Popen([str(py), "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
-                                cwd=backend, env=server_env(os.environ, tmp / "cache"),
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        try:
-            if not wait_ready(f"{base}/ownership-token?domain=example.org", 60):
-                proc.terminate()
-                try:
-                    log = proc.communicate(timeout=10)[0]
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    log = ""
-                return StepResult("FAIL", "the server did not become ready: " + tail(log or "", 10, 400))
-            results = smoke(real_http(base))
-            for name, ok, detail in results:
-                out(f"    {'ok  ' if ok else 'FAIL'} {name} ({detail})")
-            bad = [name for name, ok, _ in results if not ok]
-            return StepResult("FAIL", "failed: " + "; ".join(bad)) if bad else StepResult("PASS", f"{len(results)} checks")
-        finally:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+        return server_step(py, backend, tmp / "cache", out)
 
     def clean_tree():
-        rc, status = make_git(checkout)("status", "--porcelain")
-        if rc != 0:
-            return StepResult("FAIL", "git status failed in the clone")
-        if status:
-            return StepResult("FAIL", "the run left the clone dirty: " + tail(status, 6, 300))
-        rc, listing = make_git(checkout)("ls-files")
-        bad = tracked_problems(listing.splitlines())
-        return StepResult("FAIL", "tracked generated or secret files: " + ", ".join(bad[:5])) if bad else \
-            StepResult("PASS", "the clone is clean and no generated or secret file is tracked")
+        return clean_tree_step(make_git(checkout))
 
     return [Step("pushed and clean", check_pushed), Step("clone", clone), Step("install", install),
             Step("python tests", tests), Step("ui tests", node_tests), Step("server smoke", server),
             Step("clean tree", clean_tree)]
 
 
-def main(argv=None) -> int:
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Verify a fresh clone of AgentReady installs, passes its tests and serves.")
     parser.add_argument("--source", help="path or URL to clone (default: this repository's GitHub origin, else the local path)")
     parser.add_argument("--ref", help="branch or commit to check out (default: the current branch, which must be pushed)")
     parser.add_argument("--keep", action="store_true", help="keep the temporary directory")
     parser.add_argument("--skip-node", action="store_true", help="do not run the UI tests")
-    args = parser.parse_args(argv)
+    parser.add_argument("--pip-timeout", type=int, default=600, help="seconds allowed for pip install (default 600)")
+    parser.add_argument("--test-timeout", type=int, default=900, help="seconds allowed for the Python tests (default 900)")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
     tmp = Path(tempfile.mkdtemp(prefix="agentready-verify-"))
     try:
         print(f"Working in {tmp}")

@@ -34,3 +34,11 @@ def _clear_api_overrides():
     yield
     from app import main
     main.app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_git_config(monkeypatch):
+    """Tests that run git must not depend on the machine's git configuration (commit.gpgsign, identities, hooks paths,
+    init.defaultBranch): ignore the global and system config files."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")

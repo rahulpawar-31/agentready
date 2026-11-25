@@ -41,6 +41,7 @@ Run one owner-verified audit per site and snapshot:
 
 ```bash
 cd backend
+export AGENTREADY_SECRET=<the same value the API server uses>
 python -m app.runner.audit_cli --label ../benchmark/labels/example.test.json --snapshot before
 ```
 

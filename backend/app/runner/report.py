@@ -11,12 +11,13 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
 from .labels import AUDIT_CHECK_IDS, load_label
-from .results import read_run_files, site_slug
+from .results import read_run_files, site_slug, valid_snapshot
 from .tasks import TASK_IDS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -335,8 +336,13 @@ def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> 
     base = root / "audits" / snapshot
     problems: list[str] = []
     reports: dict[str, dict] = {}
-    if base.exists():
+    if os.path.islink(root / "audits") or os.path.islink(base):
+        problems.append(f"audits/{snapshot} is a symlink and was ignored")
+    elif base.exists():
         for path in sorted(base.glob("*.json")):
+            if path.is_symlink():
+                problems.append(f"audits/{snapshot}/{path.name} is a symlink and was ignored")
+                continue
             try:
                 row = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError, RecursionError):
@@ -425,11 +431,14 @@ def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> 
     measured = sum(item["support"] for item in checks.values())
     missing_reports = sorted(site for site, label in labels.items()
                              if label["audit_checks"] is not None and site not in reports)
+    with_reports = sum(site in reports for site, label in labels.items() if label["audit_checks"] is not None)
     return {
         "snapshot": snapshot,
         "status": "measured" if measured else "not measured",
         "labelled_sites": labelled,
-        "sites_with_reports": sum(site in reports for site, label in labels.items() if label["audit_checks"] is not None),
+        "small_sample": {"threshold": SMALL_SAMPLE, "labelled_sites_with_reports": with_reports,
+                         "is_small": with_reports < SMALL_SAMPLE},
+        "sites_with_reports": with_reports,
         "missing_reports": missing_reports,
         "checks": checks,
     }, problems
@@ -574,19 +583,33 @@ def to_markdown(report: dict) -> str:
     lines += ["No statistical test is computed, and nothing here applies beyond the sites tested.", ""]
     lines += ["## Audit check accuracy", ""]
     accuracy = report["audit_check_accuracy"]
+    if not any(accuracy[key]["labelled_sites"] for key in ("before", "after")):
+        lines += ["No site has audit_checks labels yet, so audit-check accuracy is not measured. "
+                  "Nothing in this section is a result.", ""]
     for key in ("before", "after"):
         audit = accuracy[key]
         lines += [f"### {key.title()} ({_md(audit['snapshot'])})", "",
                   f"Status: {audit['status']}; labelled sites: {audit['labelled_sites']}; "
-                  f"sites with reports: {audit['sites_with_reports']}.", "",
-                  "Positive means the audit predicts a readiness issue (the check fails).", "",
-                  "| Check | Agreement | False-positive rate | TP | FP | TN | FN | Unreachable | Missing |",
-                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+                  f"sites with reports: {audit['sites_with_reports']}.", ""]
+        if audit["labelled_sites"]:
+            n = audit["small_sample"]["labelled_sites_with_reports"]
+            lines += [f"Based on {n} labelled site{'s' if n != 1 else ''} with a saved audit. Each rate is over the "
+                      "checks that could be compared (the Support column); unreachable and missing checks are excluded.",
+                      "The audit checks read static HTML only, and the labels are the site owner's own hand labels, "
+                      "written before the audit: agreement shows that the checks matched those labels on these "
+                      "sites, nothing more. This is not a measure of agent performance.", ""]
+            if audit["small_sample"]["is_small"]:
+                lines += [f"Small sample: treat these rates as indicative only (fewer than "
+                          f"{audit['small_sample']['threshold']} labelled sites).", ""]
+        lines += ["Positive means the audit predicts a readiness issue (the check fails).", "",
+                  "| Check | Support | Agreement | False-positive rate | TP | FP | TN | FN | Unreachable | Missing |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for check_id, item in audit["checks"].items():
             agreement = _pct(item["agreement_pct"])
             fpr = _pct(item["false_positive_rate_pct"])
-            lines.append(f"| {check_id} | {agreement} | {fpr} | {item['true_positive']} | {item['false_positive']} | "
-                         f"{item['true_negative']} | {item['false_negative']} | {item['unreachable']} | {item['missing']} |")
+            lines.append(f"| {check_id} | {item['support']} | {agreement} | {fpr} | {item['true_positive']} | "
+                         f"{item['false_positive']} | {item['true_negative']} | {item['false_negative']} | "
+                         f"{item['unreachable']} | {item['missing']} |")
         if audit["missing_reports"]:
             lines += ["", "Missing audit reports: " + ", ".join(f"`{_md(site)}`" for site in audit["missing_reports"])]
         lines.append("")
@@ -601,15 +624,97 @@ def to_markdown(report: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _refuse_output(parser, output: Path, results_root: Path) -> Path:
-    """Where the report may be written: never a symlink, never inside the results tree."""
+OUTPUT_SUFFIXES = (".md", ".json")
+PROTECTED_NAMES = frozenset({"readme.md", "criteria.json", "sites.json", "pyproject.toml"})
+MAX_EXISTING_BYTES = 50_000_000
+
+
+def _is_tracked(path: Path) -> bool:
+    """True when git tracks this path (read-only `git ls-files --error-unmatch`). Not a git repository, or git
+    missing, counts as not tracked: the name and location rules still apply."""
+    try:
+        done = subprocess.run(["git", "--literal-pathspecs", "-C", str(path.parent), "ls-files", "--error-unmatch",
+                               "--", path.name], capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def _written_by_this_tool(path: Path) -> bool:
+    """An empty file, or a report this tool wrote earlier (Markdown marker line, or JSON `generated_by`)."""
+    try:
+        if path.stat().st_size == 0:
+            return True
+        if path.stat().st_size > MAX_EXISTING_BYTES:
+            return False
+        raw = path.read_bytes().decode("utf-8", errors="replace")
+        if path.name.lower().endswith(".md"):
+            return raw.splitlines()[0].strip() == MARKDOWN_MARKER
+        data = json.loads(raw)
+    except (OSError, ValueError, RecursionError, IndexError):
+        return False
+    return isinstance(data, dict) and data.get("generated_by") == GENERATED_BY
+
+
+def _refuse_output(parser, output: Path, results_root: Path, *, force: bool = False,
+                   protected=()) -> Path:
+    """Where the report may be written. Never: a symlink, a directory, a path whose parent does not exist (nothing is
+    created), a file that is not named *.md or *.json, one of the project's own files (by name, by --criteria,
+    --sites or --labels, or because git tracks it), anything inside the results tree (this one or the repository's
+    default) or inside .git, or a non-empty file that this tool did not write (unless --force-overwrite, which
+    still refuses every one of the other rules)."""
     if os.path.islink(output):
         parser.error("--output must not be a symlink")
-    resolved = output.resolve()
-    root = results_root.resolve()
-    if resolved == root or root in resolved.parents:
-        parser.error("--output must be outside the results directory (a report saved there would be read as a result)")
+    if not output.parent.is_dir():
+        parser.error("--output: the parent directory must already exist (the tool never creates directories)")
+    resolved = Path(os.path.realpath(output.parent)) / output.name
+    name = output.name.lower()
+    if resolved.is_dir():
+        parser.error("--output must be a file path, not a directory")
+    if not name.endswith(OUTPUT_SUFFIXES) or name in OUTPUT_SUFFIXES:
+        parser.error("--output must be a file named *.md or *.json")
+    if name in PROTECTED_NAMES:
+        parser.error(f"--output must not replace {output.name} (a project file)")
+    roots = [Path(os.path.realpath(results_root)), Path(os.path.realpath(REPO_ROOT / "benchmark" / "results"))]
+    if ".git" in resolved.parts:
+        parser.error("--output must not be inside .git")
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            parser.error("--output must be outside the results directory (a report saved there would be read as a "
+                         "result)")
+    for other in protected:
+        other = Path(os.path.realpath(other))
+        if resolved == other or other in resolved.parents:
+            parser.error("--output must not replace or sit inside the criteria file, the site registry or the labels")
+    if _is_tracked(resolved):
+        parser.error("--output must not overwrite a file that git tracks (write to a new file name, or remove the old file from git first)")
+    if resolved.exists() and not _written_by_this_tool(resolved) and not force:
+        parser.error("--output exists and was not written by this tool; choose a new file name "
+                     "(or pass --force-overwrite for an untracked file)")
     return resolved
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    """Write `data` to `path` through a temporary file in the same directory, then os.replace. The old file stays
+    whole if anything fails. os.replace swaps the directory entry itself: it never writes through a symlink. A
+    residual race remains between the checks in _refuse_output and the replace (another process could swap in a
+    different file); the checks are repeated here immediately before the replace to make that window small."""
+    path = Path(path)
+    if os.path.islink(path) or path.is_dir():
+        raise ValueError("refusing to write through a symlink or into a directory")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{os.urandom(4).hex()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.path.islink(path) or path.is_dir():
+            raise ValueError("the output path changed while the report was being written")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def main(argv=None) -> int:
@@ -622,23 +727,30 @@ def main(argv=None) -> int:
     parser.add_argument("--criteria", type=Path, default=REPO_ROOT / "benchmark" / "criteria.json")
     parser.add_argument("--sites", type=Path, default=REPO_ROOT / "benchmark" / "sites.json")
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
-    parser.add_argument("--output", type=Path, help="write the report here (outside --results); defaults to stdout")
+    parser.add_argument("--output", type=Path, help="write the report here (a new *.md or *.json file outside "
+                        "--results; the parent directory must exist); defaults to stdout")
+    parser.add_argument("--force-overwrite", action="store_true",
+                        help="replace an existing untracked file that this tool did not write")
     args = parser.parse_args(argv)
     if not 1 <= args.repeats <= 10:
         parser.error("--repeats must be between 1 and 10")
-    if not SNAPSHOT.fullmatch(args.before) or not SNAPSHOT.fullmatch(args.after):
-        parser.error("snapshot names must match [A-Za-z0-9_-]{1,64}")
+    if not valid_snapshot(args.before) or not valid_snapshot(args.after):
+        parser.error("snapshot names must match [A-Za-z0-9_-]{1,64} and may not be 'audits' (reserved)")
     if args.before.casefold() == args.after.casefold() or \
             (args.results / args.before).resolve() == (args.results / args.after).resolve():
         parser.error("--before and --after must name different snapshots")
-    output_path = _refuse_output(parser, args.output, args.results) if args.output else None
+    output_path = (_refuse_output(parser, args.output, args.results, force=args.force_overwrite,
+                                  protected=(args.criteria, args.sites, args.labels)) if args.output else None)
     report = build_report(args.results, args.labels, args.before, args.after, args.repeats,
                           criteria_path=args.criteria, sites_path=args.sites)
     output = (json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n" if args.format == "json"
               else to_markdown(report))
     if output_path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(output, encoding="utf-8")
+        data = output.encode("utf-8", errors="replace")         # a lone surrogate must not abort the write
+        try:
+            _write_atomic(output_path, data)
+        except (OSError, ValueError) as exc:
+            parser.error(f"could not write the report ({type(exc).__name__}); any earlier file is unchanged")
     else:
         print(output, end="")
     return 1 if report["problems"] else 0

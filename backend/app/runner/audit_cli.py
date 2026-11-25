@@ -13,8 +13,9 @@ from pathlib import Path
 
 from ..audit import audit, parse_url
 from ..fetch import is_public
-from .cli import REPO_ROOT, default_deps, git_problems
+from .cli import SECRET_MISSING, REPO_ROOT, default_deps, git_problems
 from .labels import load_label
+from .results import valid_snapshot
 
 SNAPSHOT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -24,10 +25,24 @@ def report_path(root: Path, snapshot: str, host: str) -> Path:
     return Path(root) / "audits" / snapshot / f"{slug}.json"
 
 
+def directory_problem(root, snapshot: str) -> str | None:
+    """The audit directories must be real directories: a symlink would send the report somewhere else."""
+    for part in (Path(root) / "audits", Path(root) / "audits" / snapshot):
+        if os.path.islink(part):
+            return f"{part.name} inside the results directory is a symlink"
+    return None
+
+
 def save_audit(root: Path, snapshot: str, site: str, label_sha256: str, report) -> Path:
     """Persist the redacted audit output immutably; audit run files are never overwritten."""
     path = report_path(root, snapshot, site)
+    problem = directory_problem(root, snapshot)
+    if problem:
+        raise FileExistsError(problem)
     path.parent.mkdir(parents=True, exist_ok=True)
+    problem = directory_problem(root, snapshot)                      # checked again after the directories exist
+    if problem:
+        raise FileExistsError(problem)
     report_data = asdict(report)
     origin = report_data.pop("site")
     payload = {"site": site, "origin": origin, "snapshot": snapshot,
@@ -49,8 +64,12 @@ def main(argv=None, *, deps=None, out=print, repo_root=REPO_ROOT) -> int:
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--results", type=Path, default=Path(repo_root) / "benchmark" / "results")
     args = parser.parse_args(argv)
-    if not SNAPSHOT.fullmatch(args.snapshot):
-        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64}.")
+    if not valid_snapshot(args.snapshot):
+        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64} and may not be 'audits' (reserved).")
+        return 2
+    problem = directory_problem(args.results, args.snapshot)
+    if problem:
+        out(f"Refused: {problem}; no audit was run.")
         return 2
     try:
         label_path = Path(args.label)
@@ -76,6 +95,13 @@ def main(argv=None, *, deps=None, out=print, repo_root=REPO_ROOT) -> int:
     try:
         ref = parse_url(label.site)
         deps = deps or default_deps()
+    except RuntimeError as exc:
+        out(SECRET_MISSING if "AGENTREADY_SECRET" in str(exc) else f"Refused: could not set up ({type(exc).__name__}).")
+        return 2
+    except Exception as exc:
+        out(f"Audit failed ({type(exc).__name__}); no report was recorded.")
+        return 2
+    try:
         addrs = deps.resolver(ref.hostname)
         if not addrs or not all(is_public(address) for address in addrs):
             out("Refused: the host does not resolve to public addresses, so it cannot be audited.")
