@@ -2,6 +2,7 @@
 import json
 import shutil
 import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -137,12 +138,12 @@ def test_a_missing_registry_is_a_problem(tmp_path):
     assert sites == [] and problems
 
 
-def test_the_committed_example_and_registry_are_valid_json_with_the_right_shape():
+def test_the_real_repo_example_and_registry_files_are_valid_with_the_right_shape():
     sites, problems = load_sites(REPO / "benchmark" / "sites.example.json")
     assert problems == [] and len(sites) >= 2
     assert all(s.host.endswith((".example.org", ".example.net", ".example.com")) for s in sites)
     real, problems = load_sites(REPO / "benchmark" / "sites.json")
-    assert problems == [] and real == []                      # the real registry starts empty: the owner fills it in
+    assert problems == []                      # whatever the owner has registered must be valid, however many sites
     assert "_comment" in json.loads((REPO / "benchmark" / "sites.example.json").read_text())
 
 
@@ -227,7 +228,9 @@ def test_a_label_for_a_different_host_blocks(tmp_path):
     root = make_repo(tmp_path)
     (root / "benchmark" / "labels" / "demo.example.org.json").write_text(label_json("other.example.org"))
     s = statuses(run(root))
-    assert s[("label_valid_and_committed", "demo.example.org")] == "blocked" or s[("label_names_match", "demo.example.org")] == "blocked"
+    # a label file named after one host but describing another is refused when it is read (the runner needs the name)
+    assert s[("label_valid_and_committed", "demo.example.org")] == "blocked"
+    assert s[("label_names_match", "demo.example.org")] == "skipped"
 
 
 def test_check_control_calls_the_verifier_once_per_site_and_a_failure_blocks(tmp_path):
@@ -313,14 +316,16 @@ def test_the_cli_exit_codes_and_flags(tmp_path):
              out=out.append, repo_root=root)
 
 
-def test_the_default_dependencies_are_wired_to_the_real_helpers():
-    d = pf.default_deps()
-    assert isinstance(d.sdk_installed(), bool)
-    assert d.committed([REPO / "benchmark" / "criteria.json"]) is not None
+def test_the_default_sdk_check_looks_for_the_anthropic_module(monkeypatch, tmp_path):
+    d = pf.default_deps(tmp_path)
+    looked = []
+    monkeypatch.setattr(pf.importlib.util, "find_spec", lambda name: looked.append(name))     # returns None: absent
+    assert d.sdk_installed() is False and looked == ["anthropic"]
+    monkeypatch.setattr(pf.importlib.util, "find_spec", lambda name: object())
+    assert d.sdk_installed() is True
 
 
 def _git(root, *args):
-    import subprocess
     subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
 
@@ -328,7 +333,7 @@ def test_the_committed_check_uses_the_repository_given_not_this_one(tmp_path):
     """default_deps(repo_root) must check files against the git repository at repo_root."""
     root = tmp_path / "other"
     root.mkdir()
-    _git(root, "init", "-q", "-b", "main")
+    subprocess.run(["git", "-c", "init.defaultBranch=main", "-C", str(root), "init", "-q"], check=True, capture_output=True)
     _git(root, "config", "user.email", "t@example.org")
     _git(root, "config", "user.name", "t")
     (root / "f.json").write_text("{}")
@@ -356,8 +361,6 @@ def test_main_builds_its_default_dependencies_for_the_repository_it_was_given(tm
 
 
 # Group D: registry and pre-flight hardening (review findings I7 and minors) ---------------------------------
-import subprocess
-
 from app.runner import cli as runner_cli
 from app.runner.labels import load_label
 

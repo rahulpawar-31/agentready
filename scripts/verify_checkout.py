@@ -182,12 +182,14 @@ def port_in_use(port: int) -> bool:
 
 # The loopback checks must never go through a proxy from the environment (a false failure), so every request uses an
 # opener without proxy handlers.
-NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def loopback_opener():
+    """Built at call time (never at import), so that no proxy setting can reach it."""
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def wait_ready(url: str, timeout: float, get=None, sleep=time.sleep, clock=time.monotonic) -> bool:
     def default_get(u):
-        with NO_PROXY_OPENER.open(u, timeout=3) as r:
+        with loopback_opener().open(u, timeout=3) as r:
             return r.status
     get = get or default_get
     deadline = clock() + timeout
@@ -237,7 +239,7 @@ def real_http(base: str):
         req = urllib.request.Request(base + path, method=method, headers=headers or {},
                                      data=body.encode() if isinstance(body, str) else body)
         try:
-            with NO_PROXY_OPENER.open(req, timeout=20) as r:
+            with loopback_opener().open(req, timeout=20) as r:
                 return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read().decode("utf-8", "replace")

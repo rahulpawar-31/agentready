@@ -885,3 +885,28 @@ def test_the_writer_refuses_a_path_that_became_a_symlink_and_never_writes_throug
     assert victim.read_text() == "keep me" and link.is_symlink()
     leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == []
+
+
+def stderr_of(env, capsys, out, *more):
+    with pytest.raises(SystemExit):
+        rep.main(args(env, "--output", str(out), *more))
+    return capsys.readouterr().err
+
+
+def test_each_refusal_says_why_so_the_owner_knows_what_to_change(env, tmp_path, capsys):
+    """The early checks and the writer's own checks both refuse; only the early ones can tell the owner the reason."""
+    victim = tmp_path / "victim.md"
+    victim.write_text("keep me")
+    link = tmp_path / "link.md"
+    link.symlink_to(victim)
+    assert "must not be a symlink" in stderr_of(env, capsys, link)
+    assert "parent directory must already exist" in stderr_of(env, capsys, tmp_path / "missing" / "r.md")
+    (tmp_path / "dir.md").mkdir()
+    assert "not a directory" in stderr_of(env, capsys, tmp_path / "dir.md")
+    assert "*.md or *.json" in stderr_of(env, capsys, tmp_path / "notes.txt")
+    assert "project file" in stderr_of(env, capsys, tmp_path / "README.md")
+    assert "outside the results directory" in stderr_of(env, capsys, env[1] / "x.json")
+    (tmp_path / "mine.md").write_text("my notes")
+    err = stderr_of(env, capsys, tmp_path / "mine.md")
+    assert "was not written by this tool" in err and "--force-overwrite" in err
+    assert victim.read_text() == "keep me" and (tmp_path / "mine.md").read_text() == "my notes"
