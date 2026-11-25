@@ -5,7 +5,7 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 
 ## Owner only (nothing here can be done by the tooling)
 
-- [ ] Provide `ANTHROPIC_API_KEY` in your own environment (never commit it) and install the runner extra: `pip install -e '.[runner]'`.
+- [ ] Provide `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `AGENTREADY_MODEL=gemini-3.5-flash-lite` (see docs/benchmark.md), in your own environment (never commit it) and install the runner extra: `pip install -e '.[runner]'`.
 - [ ] Choose the benchmark sites (start with five) and verify control of each: the meta tag or the DNS TXT record from `GET /ownership-token?domain=<host>`.
 - [ ] For any site you do not own, get **written permission** and record where it is kept in `permission_note` in `benchmark/sites.json`. An after run also needs permission to change or deploy.
 - [ ] For CountryStateCity or MakeMySiteLive, get the employer's written OK first, or leave them out.

@@ -391,3 +391,33 @@ def test_the_audit_cli_also_refuses_cleanly_without_the_secret(tmp_path, monkeyp
     code = audit_cli.main(["--label", str(label), "--snapshot", "before", "--results", str(tmp_path / "r")],
                           out=lines.append, repo_root=tmp_path)
     assert code == 2 and any("AGENTREADY_SECRET" in line for line in lines)
+
+
+# ---- Gemini: a used-up quota stops the batch like a rejected key ----------------------------------------------
+def test_the_loop_stops_after_a_rate_limit_or_quota_failure_and_says_how_to_resume(tmp_path):
+    class GeminiRateLimitError(Exception):
+        pass
+    ws = workspace(tmp_path)
+    rec = Recorder(script=[GeminiRateLimitError("Error code: 429 RESOURCE_EXHAUSTED: quota per day")])
+    out = []
+    assert main(argv(ws, repeats="3"), rec.deps, out.append, repo_root=ws) == 3
+    assert rec.llm.calls == 1 and len(list((ws / "results").rglob("*.json"))) == 1
+    text = " ".join(out).lower()
+    assert "quota" in text and "rerun the same command" in text
+
+
+def test_the_refusal_for_a_missing_client_names_both_keys(tmp_path):
+    ws, rec, out = workspace(tmp_path), Recorder(), []
+    def broken():
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    rec.deps.make_llm = broken
+    assert main(argv(ws), rec.deps, out.append, repo_root=ws) == 2
+    text = " ".join(out)
+    assert "GEMINI_API_KEY" in text and "ANTHROPIC_API_KEY" in text
+
+
+def test_the_default_deps_build_the_client_through_the_factory(monkeypatch):
+    from app.runner import cli
+    from app.runner.llm import make_client
+    monkeypatch.setenv("AGENTREADY_DEV", "1")
+    assert cli.default_deps().make_llm is make_client

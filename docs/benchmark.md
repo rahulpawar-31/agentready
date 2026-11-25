@@ -58,7 +58,8 @@ All commands run from the repository root unless a `cd` is shown.
 **Environment.** Run the API server (step 3) in a **separate shell** from the runner commands. Every block that runs
 `app.runner.cli run`, `app.runner.preflight` or `app.runner.audit_cli` below repeats its exports, because a fresh shell
 does not have them: `AGENTREADY_SECRET` must be the **same value** the API server was started with (the ownership
-token is derived from it), and `ANTHROPIC_API_KEY` is your own key. Without `AGENTREADY_SECRET` the commands stop with
+token is derived from it), and `ANTHROPIC_API_KEY` is your own key (or `GEMINI_API_KEY` with a `gemini-...` model: see "Using a free
+Gemini API key" below). Without `AGENTREADY_SECRET` the commands stop with
 one sentence naming it (exit code 2) and make no request. Snapshot names must match `[A-Za-z0-9_-]{1,64}`, and
 `audits` is reserved (the audit reports live in `benchmark/results/audits/`).
 
@@ -150,6 +151,43 @@ sites or 30 site-task cells stand behind the results it says "Small sample: trea
 - Claim results only for the sites tested, only for the three tasks, and only as measured.
 - Do not generalise to other sites, do not claim audit-check accuracy without hand-labelled audit outcomes, and do not
   count the MCP stub. A change on a handful of sites is an observation, not proof.
+
+## Using a free Gemini API key
+
+The runner can use Google Gemini instead of Claude. Set `AGENTREADY_MODEL` to a `gemini-...` model and put your key
+in `GEMINI_API_KEY` (in your shell only, never in a file you commit). Nothing else changes: the tools, prompts, task
+wording, limits and judge are the same, so the harness hash and `benchmark/criteria.json` stay valid.
+
+       cd backend
+       export AGENTREADY_SECRET=<the same value the API server uses>
+       export AGENTREADY_MODEL=gemini-3.5-flash-lite
+       export GEMINI_API_KEY=...          # never commit it; sent only in a request header, never logged
+       python -m app.runner.preflight --check-control
+       python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot before --repeats 3
+
+What to know before you choose it (from Google's Gemini API pages, read 25 Nov 2026):
+
+- **Use one model for the whole benchmark.** Every before and after run must use the same model; the report refuses to
+  compare runs made with different models. Do not use a deprecated `gemini-2.5-...` model: Google routes those to a
+  different model on 1 December 2026, in the middle of the benchmark.
+- **`gemini-3.5-flash-lite` is the suggested model.** Google lists it as free of charge on the free tier, and its
+  default thinking level is "minimal". Each model turn has a 1,024-token output limit (part of the pre-registered
+  harness), and Google says the output limit includes thinking tokens, so a model that thinks a lot by default can hit
+  the limit; such a turn is recorded as an invalid `max_tokens` run, never as a failure.
+- **Free-tier content is used by Google to improve its products** (Google's pricing page: "Used to improve our
+  products: Yes" for the free tier). The runner sends the pages it fetches from your site and the task wording. Use
+  the free tier only for sites whose public pages you are happy to send.
+- **Rate limits.** Free-tier limits are per Google Cloud project and are shown in Google AI Studio. The runner waits 4
+  seconds between model calls by default (`AGENTREADY_LLM_MIN_INTERVAL`, 0 to 600 seconds, to change it). On a 429 or
+  a 500/503 it waits (the delay the API asks for, or 5, 10, 20, 40 seconds) and tries again up to 4 times. If the
+  limit is still reached, or the API asks for a wait longer than 90 seconds (a used-up daily quota, which resets at
+  midnight Pacific time), the batch **stops**: valid results are kept, and you rerun the same command later in the same
+  snapshot.
+- **No live call has been tested yet.** The adapter is tested against a fake Gemini server. Run the one live test once
+  with your key before the benchmark (it makes a few model calls and fetches example.com):
+
+       cd backend
+       AGENTREADY_LIVE=1 GEMINI_API_KEY=... python -m pytest -q -k gemini tests/test_runner_live.py
 
 ## Cost and time
 
