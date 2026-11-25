@@ -19,7 +19,7 @@ from ..audit import SiteRef, parse_url
 from ..fetch import is_public
 from .cli import SNAPSHOT, git_problems, load_criteria
 from .labels import load_label
-from .results import run_path
+from .results import run_path, valid_snapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MAX_SITES = 20
@@ -330,7 +330,7 @@ def main(argv=None, deps: Deps | None = None, env=None, out=print, repo_root=REP
     parser.add_argument("--allow-existing", action="store_true")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args(argv)
-    if not SNAPSHOT.fullmatch(args.snapshot_before) or not SNAPSHOT.fullmatch(args.snapshot_after):
+    if not valid_snapshot(args.snapshot_before) or not valid_snapshot(args.snapshot_after):
         parser.error("snapshot names must match [A-Za-z0-9_-]{1,64}")
     if args.snapshot_before.casefold() == args.snapshot_after.casefold():
         parser.error("--snapshot-before and --snapshot-after must differ")

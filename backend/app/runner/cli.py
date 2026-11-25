@@ -14,6 +14,7 @@ from .agent import run_task
 from .labels import load_label
 from .llm import DEFAULT_MODEL, AnthropicClient, LLMClient
 from .results import (config_dict, guard_settings, harness_sha256, is_valid_result, move_aside, run_path,
+                      valid_snapshot,
                       save_run)
 from .tasks import MAX_TURNS, STEP_LIMIT, TASK_IDS, TASKS, TOOLSET_VERSION
 
@@ -112,8 +113,8 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
     r.add_argument("--allow-uncommitted", action="store_true")
     args = ap.parse_args(argv)
 
-    if not SNAPSHOT.match(args.snapshot):
-        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64}.")
+    if not valid_snapshot(args.snapshot):
+        out("Refused: the snapshot name must match [A-Za-z0-9_-]{1,64} and may not be 'audits' (reserved).")
         return 2
     tasks = list(dict.fromkeys(t for t in args.tasks.split(",") if t))        # no duplicates, order kept
     if not tasks or any(t not in TASKS for t in tasks):

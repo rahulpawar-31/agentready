@@ -355,3 +355,11 @@ def test_the_committed_criteria_file_matches_the_code():
     assert data["harness_sha256"] == harness_sha256() and len(sha) == 64
     text = json.dumps(data["tasks"])
     assert "quote_pattern" in text and "does not check that the quote states" in text    # the text says what the code checks
+
+
+def test_snapshot_names_with_a_trailing_newline_or_the_reserved_name_audits_are_refused(tmp_path):
+    ws = workspace(tmp_path)
+    rec = Recorder()
+    for bad in ("before\n", "audits", "audits\n", " before"):
+        assert main(argv(ws, snapshot=bad), rec.deps, lambda s: None, repo_root=ws) == 2, repr(bad)
+    assert rec.fetchers == [] and rec.verify_calls == 0 and not (ws / "results").exists()

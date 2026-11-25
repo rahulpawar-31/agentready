@@ -285,6 +285,7 @@ def test_the_command_never_creates_changes_or_deletes_files_under_results(env, t
     fill(results, "before")                      # the invalid run was moved aside, so repeat 1 is free again
     fill(results, "after")
     before = snapshot_tree(results)
+    (tmp_path / "out").mkdir()
     out = tmp_path / "out" / "evaluation.json"
     code = rep.main(["--before", "before", "--after", "after", "--results", str(results), "--labels", str(labels),
                      *extra(env), "--format", "json", "--output", str(out)])
@@ -384,6 +385,8 @@ def test_same_inputs_give_byte_identical_markdown_and_json(env, tmp_path):
     fill(results, "before", successes=lambda h, t, r: (h, t, r) != ("a.test", "docs_api", 2))
     fill(results, "after")
     a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
     for out, fmt in ((a, "markdown"), (b, "markdown")):
         rep.main(args(env, "--format", fmt, "--output", str(out / "r.md")))
     assert (a / "r.md").read_bytes() == (b / "r.md").read_bytes()
@@ -391,7 +394,7 @@ def test_same_inputs_give_byte_identical_markdown_and_json(env, tmp_path):
         rep.main(args(env, "--format", "json", "--output", str(out / "r.json")))
     assert (a / "r.json").read_bytes() == (b / "r.json").read_bytes()
     keys = list(json.loads((a / "r.json").read_text()))
-    assert keys == sorted(keys) or "paired_comparison" in keys
+    assert keys == sorted(keys) and "paired_comparison" in keys and keys[0] == "after"
 
 
 # 11 ------------------------------------------------------------------------------------------------------
@@ -736,3 +739,149 @@ def test_a_broken_registry_is_reported_not_raised(env, tmp_path):
     reg.write_text("[" * 200000)
     r = rep.build_report(results, env[0], "before", "after", 3, criteria_path=criteria_of(env), sites_path=reg)
     assert any("site registry" in p for p in r["problems"])
+
+
+# Group B: --output safety (review finding I1) ------------------------------------------------------------
+import subprocess
+
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+MARK = "<!-- agentready-report -->"
+
+
+def git(repo: Path, *a):
+    return subprocess.run(["git", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false",
+                           "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(repo), *a],
+                          check=True, capture_output=True, text=True, env=GIT_ENV)
+
+
+def ran_ok(env, out, *more):
+    return rep.main(args(env, "--output", str(out), *more))
+
+
+def refused(env, out, *more):
+    with pytest.raises(SystemExit):
+        rep.main(args(env, "--output", str(out), *more))
+
+
+def test_output_parent_directory_must_exist_and_is_never_created(env, tmp_path):
+    refused(env, tmp_path / "missing" / "deeper" / "r.md")
+    assert not (tmp_path / "missing").exists()
+
+
+def test_output_may_not_be_a_directory(env, tmp_path):
+    (tmp_path / "d.md").mkdir()
+    refused(env, tmp_path / "d.md")
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "report", "x.py", "r.md.exe", "r.markdown", ".md"])
+def test_output_must_be_a_markdown_or_json_file_name(env, tmp_path, name):
+    refused(env, tmp_path / name)
+    assert not (tmp_path / name).exists()
+
+
+@pytest.mark.parametrize("name", ["README.md", "criteria.json", "sites.json", "pyproject.toml", "readme.md",
+                                  "SITES.JSON"])
+def test_output_may_not_replace_the_projects_own_files_even_by_name(env, tmp_path, name):
+    target = tmp_path / "x" / name
+    target.parent.mkdir()
+    target.write_text("keep me")
+    refused(env, target, "--force-overwrite")
+    assert target.read_text() == "keep me"
+
+
+def test_output_may_not_replace_the_criteria_file_the_report_was_given(env):
+    before = criteria_of(env).read_bytes()
+    refused(env, criteria_of(env), "--force-overwrite")
+    assert criteria_of(env).read_bytes() == before
+
+
+def test_output_may_not_be_inside_git_or_the_default_results_tree(env, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "benchmark" / "results").mkdir(parents=True)
+    monkeypatch.setattr(rep, "REPO_ROOT", repo)
+    for target in (repo / ".git" / "x.json", repo / "benchmark" / "results" / "evaluation.json"):
+        refused(env, target, "--force-overwrite")
+        assert not target.exists()
+
+
+def test_output_may_not_overwrite_a_git_tracked_file_even_with_force(env, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / "notes.md").write_text("tracked notes")
+    git(repo, "add", "notes.md")
+    git(repo, "commit", "-q", "-m", "x")
+    refused(env, repo / "notes.md", "--force-overwrite")
+    assert (repo / "notes.md").read_text() == "tracked notes"
+    assert ran_ok(env, repo / "fresh.md") in (0, 1)          # an untracked new file in a repo is fine
+    assert (repo / "fresh.md").read_text().startswith(MARK)
+
+
+def test_output_will_not_overwrite_a_file_this_tool_did_not_write(env, tmp_path):
+    for name, text in (("mine.md", "my own notes\n"), ("mine.json", '{"hello": 1}'), ("broken.json", "{oops")):
+        target = tmp_path / name
+        target.write_text(text)
+        refused(env, target)
+        assert target.read_text() == text
+    forced = tmp_path / "mine.md"
+    assert ran_ok(env, forced, "--force-overwrite") in (0, 1)
+    assert forced.read_text().startswith(MARK)
+
+
+def test_output_overwrites_its_own_earlier_reports_and_empty_files(env, tmp_path):
+    md, js, empty = tmp_path / "r.md", tmp_path / "r.json", tmp_path / "e.md"
+    empty.write_text("")
+    for target, fmt in ((md, "markdown"), (js, "json"), (empty, "markdown")):
+        assert ran_ok(env, target, "--format", fmt) in (0, 1)
+        assert ran_ok(env, target, "--format", fmt) in (0, 1)         # the second run replaces the first
+    assert md.read_text().splitlines()[0] == MARK
+    assert json.loads(js.read_text())["generated_by"] == "app.runner.report"
+
+
+def test_a_lone_surrogate_never_truncates_an_existing_report(env, tmp_path):
+    _, results = env
+    path = put(results, "before", "a.test", "main_info", 1, False)
+    path.write_text(path.read_text().replace('"wrong_page"', '"\\ud800 boom"'))
+    for fmt, name in (("markdown", "r.md"), ("json", "r.json")):
+        out = tmp_path / name
+        assert ran_ok(env, out, "--format", fmt) in (0, 1)
+        first = out.read_text()
+        assert first and "\ud800" not in first and "boom" in first
+        assert ran_ok(env, out, "--format", fmt) in (0, 1)
+        assert out.read_text() == first                             # rewriting is stable, never empty
+
+
+def test_a_failed_write_leaves_the_old_report_and_no_temporary_file(env, tmp_path, monkeypatch):
+    out = tmp_path / "r.md"
+    assert ran_ok(env, out) in (0, 1)
+    good = out.read_bytes()
+
+    def boom(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(rep.os, "replace", boom)
+    with pytest.raises((OSError, SystemExit)):
+        ran_ok(env, out, "--format", "markdown")
+    assert out.read_bytes() == good
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_the_report_is_written_through_a_temporary_file_in_the_same_directory(env, tmp_path, monkeypatch):
+    seen = []
+    real = os.replace
+    monkeypatch.setattr(rep.os, "replace", lambda s, d: (seen.append((Path(s), Path(d))), real(s, d))[1])
+    out = tmp_path / "r.json"
+    ran_ok(env, out, "--format", "json")
+    assert len(seen) == 1 and seen[0][0].parent == out.parent and seen[0][1] == out and seen[0][0] != out
+
+
+def test_the_writer_refuses_a_path_that_became_a_symlink_and_never_writes_through_it(tmp_path):
+    victim = tmp_path / "victim.md"
+    victim.write_text("keep me")
+    link = tmp_path / "link.md"
+    link.symlink_to(victim)
+    with pytest.raises(ValueError):
+        rep._write_atomic(link, b"new")
+    assert victim.read_text() == "keep me" and link.is_symlink()
+    leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+    assert leftovers == []

@@ -176,3 +176,102 @@ def test_audit_cli_verifies_control_then_saves_one_guarded_snapshot(tmp_path, mo
     assert calls[0] == ("resolve", "x.test") and calls[1] == ("verify", "x.test")
     assert all(url.startswith("https://x.test/") for url in calls if isinstance(url, str))
 
+
+
+# Review of PR #8 (audit_cli and the accuracy section): defects found and pinned ------------------------------
+import pytest
+
+
+def _fake_audit_deps(calls):
+    class FakeFetcher:
+        def get(self, url, *, rendered=False):
+            calls.append(url)
+            return Page(url, 404, {}, "")
+
+    class Deps:
+        verify = staticmethod(lambda ref: calls.append(("verify", ref.netloc)) or True)
+        resolver = staticmethod(lambda host: calls.append(("resolve", host)) or ["93.184.216.34"])
+        make_fetcher = staticmethod(lambda host, snapshot: calls.append(("fetcher", host, snapshot)) or FakeFetcher())
+    return Deps
+
+
+def _run_audit(tmp_path, monkeypatch, results, snapshot="before"):
+    label = make_label(tmp_path / "benchmark" / "labels")
+    calls, output = [], []
+    monkeypatch.setattr(audit_cli, "git_problems", lambda paths, repo_root: [])
+    code = audit_main(["--label", str(label), "--snapshot", snapshot, "--results", str(results)],
+                      deps=_fake_audit_deps(calls), out=output.append, repo_root=tmp_path)
+    return code, calls, output
+
+
+@pytest.mark.parametrize("name", ["audits", "before\n", "audits\n"])
+def test_audit_cli_refuses_the_reserved_snapshot_name_and_trailing_newlines(tmp_path, monkeypatch, name):
+    results = tmp_path / "results"
+    code, calls, _ = _run_audit(tmp_path, monkeypatch, results, name)
+    assert code == 2 and calls == [] and not results.exists()
+
+
+def test_audit_cli_never_writes_through_a_symlinked_audit_directory(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "audits").symlink_to(elsewhere)
+    code, calls, output = _run_audit(tmp_path, monkeypatch, results)
+    assert code == 2 and calls == [] and list(elsewhere.iterdir()) == []
+    assert any("symlink" in line for line in output)
+
+
+def test_audit_cli_never_writes_through_a_symlinked_snapshot_directory(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    results = tmp_path / "results"
+    (results / "audits").mkdir(parents=True)
+    (results / "audits" / "before").symlink_to(elsewhere)
+    code, calls, _ = _run_audit(tmp_path, monkeypatch, results)
+    assert code == 2 and calls == [] and list(elsewhere.iterdir()) == []
+
+
+def test_the_report_ignores_a_symlinked_audit_file_and_says_so(tmp_path):
+    label = make_label(tmp_path / "labels")
+    results = tmp_path / "results"
+    real = write_audit(results, "stash", label)
+    link = report_path(results, "before", "x.test")
+    link.parent.mkdir(parents=True)
+    link.symlink_to(real)
+    report = build_report(results, tmp_path / "labels", "before", "after")
+    assert report["audit_check_accuracy"]["before"]["sites_with_reports"] == 0
+    assert any("symlink" in p for p in report["problems"])
+
+
+def test_the_report_refuses_the_reserved_snapshot_name_audits(tmp_path):
+    from app.runner import report as rep
+    make_label(tmp_path / "labels")
+    for before, after in (("audits", "after"), ("before", "audits")):
+        with pytest.raises(SystemExit):
+            rep.main(["--before", before, "--after", after, "--results", str(tmp_path / "results"),
+                      "--labels", str(tmp_path / "labels")])
+
+
+def test_accuracy_numbers_always_carry_their_sample_size_and_caveats(tmp_path):
+    label = make_label(tmp_path / "labels")
+    results = tmp_path / "results"
+    write_audit(results, "before", label)
+    report = build_report(results, tmp_path / "labels", "before", "after")
+    before = report["audit_check_accuracy"]["before"]
+    assert before["small_sample"] == {"threshold": 30, "labelled_sites_with_reports": 1, "is_small": True}
+    md = to_markdown(report)
+    section = md.split("## Audit check accuracy", 1)[1].split("## Limitations", 1)[0]
+    assert "Based on 1 labelled site with a saved audit" in section
+    assert "Small sample" in section and "indicative only" in section
+    assert "static HTML" in section and "hand labels" in section and "nothing more" in section
+    assert "| Support |" in section
+    assert "not a measure of agent performance" in section.lower() or "does not measure agent" in section.lower()
+
+
+def test_accuracy_with_no_labelled_sites_says_it_is_not_measured_and_prints_no_percentages(tmp_path):
+    make_label(tmp_path / "labels", audit_checks=None)
+    report = build_report(tmp_path / "results", tmp_path / "labels", "before", "after")
+    md = to_markdown(report)
+    section = md.split("## Audit check accuracy", 1)[1].split("## Limitations", 1)[0]
+    assert "No site has audit_checks labels yet" in section and "%" not in section
