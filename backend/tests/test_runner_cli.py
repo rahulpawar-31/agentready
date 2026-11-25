@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -363,3 +364,30 @@ def test_snapshot_names_with_a_trailing_newline_or_the_reserved_name_audits_are_
     for bad in ("before\n", "audits", "audits\n", " before"):
         assert main(argv(ws, snapshot=bad), rec.deps, lambda s: None, repo_root=ws) == 2, repr(bad)
     assert rec.fetchers == [] and rec.verify_calls == 0 and not (ws / "results").exists()
+
+
+def test_a_missing_agentready_secret_is_a_clean_refusal_not_a_traceback(tmp_path):
+    """cli run builds the real dependencies, which import the API module: that refuses to start without a secret."""
+    ws = workspace(tmp_path)
+    env = {k: v for k, v in os.environ.items() if k not in ("AGENTREADY_SECRET", "AGENTREADY_DEV")}
+    backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    done = subprocess.run([sys.executable, "-m", "app.runner.cli", *argv(ws)], cwd=backend, env={**env, "PYTHONPATH": backend},
+                          capture_output=True, text=True, timeout=120)
+    text = done.stdout + done.stderr
+    assert done.returncode == 2, text
+    assert "AGENTREADY_SECRET" in text and "Traceback" not in text
+
+
+def test_the_audit_cli_also_refuses_cleanly_without_the_secret(tmp_path, monkeypatch):
+    from app.runner import audit_cli
+
+    def no_secret():
+        raise RuntimeError("Set AGENTREADY_SECRET (or AGENTREADY_DEV=1 for local development only)")
+    monkeypatch.setattr(audit_cli, "default_deps", no_secret)
+    label = tmp_path / "x.test.json"
+    label.write_text(json.dumps({**LABEL, "audit_checks": {c: True for c in __import__("app.runner.labels", fromlist=["x"]).AUDIT_CHECK_IDS}}))
+    monkeypatch.setattr(audit_cli, "git_problems", lambda paths, repo_root: [])
+    lines = []
+    code = audit_cli.main(["--label", str(label), "--snapshot", "before", "--results", str(tmp_path / "r")],
+                          out=lines.append, repo_root=tmp_path)
+    assert code == 2 and any("AGENTREADY_SECRET" in line for line in lines)

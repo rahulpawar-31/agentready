@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ..audit import audit, parse_url
 from ..fetch import is_public
-from .cli import REPO_ROOT, default_deps, git_problems
+from .cli import SECRET_MISSING, REPO_ROOT, default_deps, git_problems
 from .labels import load_label
 from .results import valid_snapshot
 
@@ -95,6 +95,13 @@ def main(argv=None, *, deps=None, out=print, repo_root=REPO_ROOT) -> int:
     try:
         ref = parse_url(label.site)
         deps = deps or default_deps()
+    except RuntimeError as exc:
+        out(SECRET_MISSING if "AGENTREADY_SECRET" in str(exc) else f"Refused: could not set up ({type(exc).__name__}).")
+        return 2
+    except Exception as exc:
+        out(f"Audit failed ({type(exc).__name__}); no report was recorded.")
+        return 2
+    try:
         addrs = deps.resolver(ref.hostname)
         if not addrs or not all(is_public(address) for address in addrs):
             out("Refused: the host does not resolve to public addresses, so it cannot be audited.")

@@ -4,7 +4,7 @@ A Lighthouse for AI agents: AgentReady takes a website URL, checks that you cont
 
 ## The problem it interprets (Homingo problem A1)
 
-The official wording, as shown on the Homingo Problem statements page and checked against a screenshot on 21 Nov 2026:
+The wording, transcribed from the Homingo problem statement on 21 Nov 2026:
 
 > "We want the tools that make agents first-class users: interfaces, identity, permissions, payments, memory, sandboxes and testing built for agents rather than people."
 
@@ -59,9 +59,12 @@ The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui
 
 The task runner needs the `runner` extra and an API key in your environment (never commit it). The whole procedure, the rules for which sites may be used and what may be claimed are in [docs/benchmark.md](docs/benchmark.md). In short:
 
+Run the API server in a **separate shell** from these commands. In the shell that runs them, export the **same value** of `AGENTREADY_SECRET` that the API server was started with (the ownership token is derived from it); without it the commands stop with one sentence naming it.
+
 ```bash
 cd backend
 pip install -e '.[runner]'
+export AGENTREADY_SECRET=<the same value the API server uses>
 export ANTHROPIC_API_KEY=...            # read by the SDK; AgentReady never stores or logs it
 python -m app.runner.preflight --check-control    # lists what is still missing
 python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot before --repeats 3
@@ -84,6 +87,7 @@ Before an audit run, independently label all 13 expected check outcomes in the s
 
 ```bash
 cd backend
+export AGENTREADY_SECRET=<the same value the API server uses>
 python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot before
 python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot after
 ```

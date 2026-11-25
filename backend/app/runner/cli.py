@@ -83,6 +83,20 @@ def load_criteria(path) -> tuple[dict, str]:
     return data, hashlib.sha256(raw).hexdigest()
 
 
+SECRET_MISSING = ("Refused: AGENTREADY_SECRET is not set. Export the same value the API server uses (the ownership "
+                  "token is derived from it), in this shell, then run the command again. See docs/benchmark.md.")
+
+
+def build_default_deps(out=print) -> "Deps | None":
+    """default_deps(), but a missing AGENTREADY_SECRET is a one-sentence refusal instead of a traceback. Returns None
+    after printing the refusal."""
+    try:
+        return default_deps()
+    except RuntimeError as exc:
+        out(SECRET_MISSING if "AGENTREADY_SECRET" in str(exc) else f"Refused: could not set up ({type(exc).__name__}).")
+        return None
+
+
 def default_deps() -> Deps:
     from .. import main as api                      # raises unless AGENTREADY_SECRET (or AGENTREADY_DEV=1) is set
     from ..fetch import default_resolver
@@ -129,7 +143,9 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
     except ValueError as e:
         out(f"Refused: {e}")
         return 2
-    deps = deps or default_deps()
+    deps = deps or build_default_deps(out)
+    if deps is None:
+        return 2
     if not args.allow_uncommitted:
         problems = deps.committed([Path(args.criteria), Path(args.label)])
         if problems:

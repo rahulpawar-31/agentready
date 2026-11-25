@@ -9,19 +9,23 @@ Use a site the team controls (or has written permission to change), already regi
 
 ## Timeline
 
+Eleven segments, each at least ten seconds, ending at exactly 3:00. The audit takes about ten seconds: talk over the
+status line while it runs. Do not run a second live audit for the MCP segment; show an **already-run** call instead.
+
 | Time | Screen | Do | Say |
 |---|---|---|---|
 | 0:00 | Title card or the README | nothing | One sentence on the problem: agents are becoming users of websites, and most sites were built for people. Say the A1 wording only if the live-page re-check in the submission checklist passed; otherwise paraphrase without quoting. |
-| 0:20 | The page, step 1 | type the team site's address, press "Get verification steps" | "AgentReady only looks at a site you can prove you control." |
-| 0:35 | Step 2, verification | show the meta tag and the DNS record; if time allows, press "Verify and audit" before adding the tag to show the refusal | "Before the check, it looks up a DNS record, or fetches the home page once for the tag. Nothing else is requested until this passes." |
-| 1:00 | Step 3, the score | press "Verify and audit" with the proof in place; when the report appears, open one finding, then one "not detected" finding | "Every finding shows the URL, what was checked, what was seen and how sure we are. 'Not detected' means this check did not see it, not that it is absent." |
-| 1:25 | Step 4, fixes | press "Propose fixes"; open the `llms.txt` diff | "These are proposals. Every one is validated and shown as a diff against what the audit saw." |
-| 1:50 | Step 4, approval | press "Approve" on `llms.txt` | "Approving changes nothing on the site. AgentReady never deploys." |
-| 2:05 | Step 4, export | press "Download", open the downloaded file | "Now the owner downloads or copies the file, and deploys it themselves." |
-| 2:15 | The live site | show the deployed `/llms.txt` in a tab | "The owner put it on the site." |
-| 2:25 | Step 3 again | press "Re-audit with fresh pages" | "Same checks, fresh pages." Read the new score and what changed from the screen. |
-| 2:40 | `benchmark/evaluation.md` | scroll to the paired comparison and the sample-size line | Read the real numbers from the evaluation report, the number of sites, the number of valid runs, and the line that says whether it is a small sample. "These results describe only the sites we tested." |
-| 2:55 | A terminal or an MCP client | an agent calls `audit_site`, then `propose_fixes` | "Agents can call the same checks over MCP. They can propose fixes but cannot approve or export them." Close with the limits sentence: static pages only, tested sites only, discovery and retrieval only. |
+| 0:15 | The page, step 1 | type the team site's address, press "Get verification steps" | "AgentReady only looks at a site you can prove you control." |
+| 0:25 | Step 2, verification | show the meta tag and the DNS record; if time allows, press "Verify and audit" before adding the tag to show the refusal | "Before the check, it looks up a DNS record, or fetches the home page once for the tag. Nothing else is requested until this passes." |
+| 0:45 | Step 3, the score | press "Verify and audit" with the proof in place; talk over the status line; when the report appears, open one "not detected" finding | "Every finding shows the URL, what was checked, what was seen and how sure we are. 'Not detected' means this check did not see it, not that it is absent." |
+| 1:10 | Step 4, fixes | press "Propose fixes"; open the `llms.txt` diff | "These are proposals. Every one is validated and shown as a diff against what the audit saw." |
+| 1:30 | Step 4, approval | press "Approve" on `llms.txt` | "Approving changes nothing on the site. AgentReady never deploys." |
+| 1:40 | Step 4, export | press "Download", open the downloaded file | "Now the owner downloads or copies the file, and deploys it themselves." |
+| 1:50 | The live site | show the deployed `/llms.txt` in a tab | "The owner put it on the site." |
+| 2:00 | Step 3 again | press "Re-audit with fresh pages"; talk over the status line | "Same checks, fresh pages." Read the new score and what changed from the screen. |
+| 2:20 | `benchmark/evaluation.md` | scroll to the paired comparison and the sample-size line | Read the real numbers from the evaluation report, the number of sites, the number of valid runs, and the line that says whether it is a small sample. "These results describe only the sites we tested." |
+| 2:40 | A terminal or an MCP client, with the output of an **already-run** `audit_site` and `propose_fixes` call | scroll the saved output; do not wait for a live audit | "Agents can call the same checks over MCP. They can propose fixes but cannot approve or export them." Close with the limits sentence: static pages only, tested sites only, discovery and retrieval only. |
+| 3:00 | End | stop recording | |
 
 ## Before recording
 

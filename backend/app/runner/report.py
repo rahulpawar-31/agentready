@@ -687,7 +687,7 @@ def _refuse_output(parser, output: Path, results_root: Path, *, force: bool = Fa
         if resolved == other or other in resolved.parents:
             parser.error("--output must not replace or sit inside the criteria file, the site registry or the labels")
     if _is_tracked(resolved):
-        parser.error("--output must not overwrite a file that git tracks")
+        parser.error("--output must not overwrite a file that git tracks (write to a new file name, or remove the old file from git first)")
     if resolved.exists() and not _written_by_this_tool(resolved) and not force:
         parser.error("--output exists and was not written by this tool; choose a new file name "
                      "(or pass --force-overwrite for an untracked file)")
