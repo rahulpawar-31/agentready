@@ -66,11 +66,13 @@ cd backend
 pip install -e '.[runner]'
 export AGENTREADY_SECRET=<the same value the API server uses>
 export ANTHROPIC_API_KEY=...            # read by the SDK; AgentReady never stores or logs it
+# or, with a free Gemini key: export AGENTREADY_MODEL=gemini-3.5-flash-lite GEMINI_API_KEY=...
 python -m app.runner.preflight --check-control    # lists what is still missing
 python -m app.runner.cli run --label ../benchmark/labels/<host>.json --snapshot before --repeats 3
 python -m app.runner.report --before before --after after --output ../benchmark/evaluation.md
 ```
 
+- A free Google Gemini key works too: see "Using a free Gemini API key" in [docs/benchmark.md](docs/benchmark.md) for the model to choose, the rate limits and the fact that free-tier content is used by Google to improve its products.
 - Before any run, commit `benchmark/criteria.json` and a hand-written label for the site (format in `benchmark/labels/README.md`), register the site in `benchmark/sites.json`, and prove control of it. The runner refuses to start unless the criteria and the label are committed and byte for byte unchanged.
 - Use a different `--snapshot` for the run against the changed site ("after"). Results are written to `benchmark/results/<snapshot>/<site>/<task>-<n>.json` and a valid result is never overwritten.
 - A run whose model call failed or whose tools broke is marked INVALID, kept, reported separately and rerun with the same command; it is never counted as a failure. If the API rejects the key the run stops after the first attempt.

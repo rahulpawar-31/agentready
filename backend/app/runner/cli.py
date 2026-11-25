@@ -12,7 +12,7 @@ from ..audit import SiteRef, parse_url
 from ..fetch import is_public
 from .agent import run_task
 from .labels import load_label
-from .llm import DEFAULT_MODEL, AnthropicClient, LLMClient
+from .llm import DEFAULT_MODEL, LLMClient, make_client
 from .results import (config_dict, guard_settings, harness_sha256, is_valid_result, move_aside, run_path,
                       valid_snapshot,
                       save_run)
@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SNAPSHOT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MAX_REPEATS = 10
 AUTH_FAILURES = ("AuthenticationError", "PermissionDeniedError", "Error code: 401", "Error code: 403")
+QUOTA_FAILURES = ("RateLimitError", "Error code: 429")
 
 
 @dataclass
@@ -120,7 +121,7 @@ def default_deps() -> Deps:
 
     return Deps(verify=verify, resolver=default_resolver,
                 make_fetcher=lambda netloc, snapshot: api.build_audit_fetcher(netloc, snapshot),
-                make_llm=AnthropicClient, committed=git_problems, git_head=git_head,
+                make_llm=make_client, committed=git_problems, git_head=git_head,
                 model=os.environ.get("AGENTREADY_MODEL", DEFAULT_MODEL))
 
 
@@ -178,7 +179,8 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
     try:
         llm = deps.make_llm()
     except Exception as e:
-        out(f"Refused: the model client could not be created ({type(e).__name__}). Install the runner extra and set the key.")
+        out(f"Refused: the model client could not be created ({type(e).__name__}). For a Claude model install the runner "
+            "extra and set ANTHROPIC_API_KEY; for a gemini-... model set GEMINI_API_KEY.")
         return 2
 
     kept = len(planned) - len(todo)
@@ -203,6 +205,11 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
         if run.reason == "llm_error" and any(m in run.error for m in AUTH_FAILURES):
             out("Stopping: the model API rejected the credentials (authentication failure). Check the key, then rerun "
                 "in this snapshot; the remaining runs were not started.")
+            break
+        if run.reason == "llm_error" and any(m in run.error for m in QUOTA_FAILURES):
+            out("Stopping: the model API's rate limit or daily quota is used up, even after waiting. Wait (a free "
+                "Gemini key's daily quota resets at midnight Pacific time), then rerun the same command in this "
+                "snapshot; valid results are kept and the remaining runs were not started.")
             break
     return 3 if invalid else 0
 

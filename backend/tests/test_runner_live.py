@@ -33,3 +33,20 @@ def test_one_real_model_call_completes_a_tool_loop(tmp_path):
     run = run_task(task=TASKS["docs_api"], label=TaskLabel(none_exists=True), origin="https://example.com",
                    fetcher=CachedFetcher(guarded, tmp_path), llm=AnthropicClient(), step_limit=4, max_turns=8)
     assert run.valid and run.turns >= 1 and run.steps_used <= 4        # the outcome itself is not asserted
+
+
+@live
+@pytest.mark.live
+@pytest.mark.skipif(not os.environ.get("GEMINI_API_KEY"), reason="needs GEMINI_API_KEY")
+def test_one_real_gemini_call_completes_a_tool_loop(tmp_path):
+    """Run by hand once with a real key: AGENTREADY_LIVE=1 GEMINI_API_KEY=... pytest -q -k gemini tests/test_runner_live.py"""
+    from app.runner.agent import run_task
+    from app.runner.gemini import GeminiClient
+    from app.runner.labels import TaskLabel
+    from app.runner.tasks import TASKS
+    model = os.environ.get("AGENTREADY_MODEL", "gemini-3.5-flash-lite")
+    guarded = GuardedFetcher(HttpxFetcher(), "example.com")
+    run = run_task(task=TASKS["docs_api"], label=TaskLabel(none_exists=True), origin="https://example.com",
+                   fetcher=CachedFetcher(guarded, tmp_path), llm=GeminiClient(model), step_limit=4, max_turns=8)
+    assert run.valid, run.error or run.reason          # a valid run means the request shape and replay worked
+    assert run.turns >= 1 and run.steps_used <= 4 and run.model.startswith("gemini-")

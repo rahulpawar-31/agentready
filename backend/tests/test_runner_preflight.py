@@ -504,3 +504,36 @@ def test_deeply_nested_json_is_a_refusal_not_a_crash_in_the_label_and_criteria_r
     criteria.write_text("[" * 200000)
     with pytest.raises(ValueError):
         runner_cli.load_criteria(criteria)
+
+
+# ---- Gemini ----------------------------------------------------------------------------------------------------
+GEMINI_KEY = "AIzaSyPREFLIGHTKEY0123456789abcdefghij"
+
+
+def test_a_gemini_model_needs_gemini_api_key_not_the_anthropic_one_or_its_sdk(tmp_path):
+    root = make_repo(tmp_path)
+    fakes = Fakes()
+    fakes.sdk = False
+    r = run(root, fakes, env={"AGENTREADY_MODEL": "gemini-3.5-flash-lite", "ANTHROPIC_API_KEY": SECRET_KEY})
+    s = statuses(r)
+    assert s[("api_key_present", "")] == "blocked" and s[("sdk_installed", "")] == "ok"
+    assert "GEMINI_API_KEY" in pf.to_text(r)
+    r = run(root, fakes, env={"AGENTREADY_MODEL": "gemini-3.5-flash-lite", "GEMINI_API_KEY": GEMINI_KEY})
+    assert statuses(r)[("api_key_present", "")] == "ok" and statuses(r)[("model", "")] == "ok"
+    text = pf.to_text(r) + json.dumps(pf.to_dict(r))
+    assert GEMINI_KEY not in text and "gemini-3.5-flash-lite" in text
+
+
+def test_a_bad_gemini_model_name_or_interval_blocks(tmp_path):
+    root = make_repo(tmp_path)
+    env = {"AGENTREADY_MODEL": "gemini-../x", "GEMINI_API_KEY": GEMINI_KEY}
+    assert statuses(run(root, env=env))[("model", "")] == "blocked"
+    env = {"AGENTREADY_MODEL": "gemini-3.5-flash-lite", "GEMINI_API_KEY": GEMINI_KEY,
+           "AGENTREADY_LLM_MIN_INTERVAL": "soon"}
+    assert statuses(run(root, env=env))[("sdk_installed", "")] == "blocked"
+
+
+def test_the_default_model_still_needs_the_anthropic_key(tmp_path):
+    root = make_repo(tmp_path)
+    r = run(root, env={"GEMINI_API_KEY": GEMINI_KEY})
+    assert statuses(r)[("api_key_present", "")] == "blocked" and "ANTHROPIC_API_KEY" in pf.to_text(r)

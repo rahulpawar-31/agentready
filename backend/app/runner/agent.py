@@ -30,7 +30,7 @@ class RunResult:
 
 
 ERROR_CLIP = 300
-_KEY_LIKE = re.compile(r"sk-[A-Za-z0-9_-]{6,}")
+_KEY_LIKE = re.compile(r"sk-[A-Za-z0-9_-]{6,}|AIza[0-9A-Za-z_-]{20,}")   # Anthropic and Google key shapes
 
 
 def describe(e: BaseException) -> str:

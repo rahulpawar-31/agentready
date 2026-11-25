@@ -66,3 +66,13 @@ class AnthropicClient:
         return LLMResponse(" ".join(text_parts), tuple(calls), tuple(content),
                            getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0,
                            str(getattr(resp, "stop_reason", "") or ""), str(getattr(resp, "model", "") or ""))
+
+
+def make_client(model: str | None = None) -> LLMClient:
+    """The client for the configured model: a gemini-... model uses the Gemini REST adapter and GEMINI_API_KEY,
+    anything else the Anthropic SDK and ANTHROPIC_API_KEY. Neither choice changes the harness hash."""
+    model = model or os.environ.get("AGENTREADY_MODEL", DEFAULT_MODEL)
+    if model.startswith("gemini-"):
+        from .gemini import GeminiClient          # imported lazily, like the Anthropic SDK
+        return GeminiClient(model)
+    return AnthropicClient(model)

@@ -106,15 +106,18 @@ def chunks(text: str):
 
 
 def test_every_runner_command_block_states_the_exports_it_needs():
-    """cli run and preflight need ANTHROPIC_API_KEY and the SAME AGENTREADY_SECRET the API used; audit_cli needs the
+    """cli run and preflight need ANTHROPIC_API_KEY (or GEMINI_API_KEY with a gemini model) and the SAME AGENTREADY_SECRET the API used; audit_cli needs the
     secret. A block that runs them without the exports crashes in a fresh shell."""
     problems = []
     for path in (README, REPO / "docs" / "benchmark.md", REPO / "docs" / "benchmark-report.md"):
         for chunk in chunks(EXAMPLE_BLOCK.sub("", read(path))):
             if re.search(r"-m app\.runner\.(cli run|preflight)", chunk):
-                for needle in ("export AGENTREADY_SECRET=", "export ANTHROPIC_API_KEY="):
-                    if needle not in chunk:
-                        problems.append(f"{path.name}: a runner block lacks `{needle}`: {chunk.strip()[:60]!r}")
+                if "export AGENTREADY_SECRET=" not in chunk:
+                    problems.append(f"{path.name}: a runner block lacks `export AGENTREADY_SECRET=`: {chunk.strip()[:60]!r}")
+                gemini = "export GEMINI_API_KEY=" in chunk and "export AGENTREADY_MODEL=gemini-" in chunk
+                if "export ANTHROPIC_API_KEY=" not in chunk and not gemini:
+                    problems.append(f"{path.name}: a runner block exports neither ANTHROPIC_API_KEY nor GEMINI_API_KEY "
+                                    f"with a gemini model: {chunk.strip()[:60]!r}")
             if re.search(r"-m app\.runner\.audit_cli", chunk) and "export AGENTREADY_SECRET=" not in chunk:
                 problems.append(f"{path.name}: an audit_cli block lacks `export AGENTREADY_SECRET=`")
     assert problems == []

@@ -3,7 +3,7 @@
 Run from ``backend`` with ``python -m app.runner.preflight`` (offline) or ``... --check-control`` (also performs the real
 ownership verification for each listed site, the same one the audit and the runner use).
 
-The pre-flight never prints a secret (it only checks that ANTHROPIC_API_KEY is set), never calls a model, never writes a
+The pre-flight never prints a secret (it only checks that ANTHROPIC_API_KEY, or GEMINI_API_KEY for a gemini-... model, is set), never calls a model, never writes a
 file and, unless --check-control is given, makes no network request.
 """
 import argparse
@@ -19,7 +19,9 @@ from typing import Callable
 from ..audit import SiteRef, parse_url
 from ..fetch import is_public
 from .cli import GIT_MISSING, SNAPSHOT, git_problems, load_criteria
+from .gemini import MODEL_PATTERN as GEMINI_MODEL, min_interval_from_env
 from .labels import load_label
+from .llm import DEFAULT_MODEL
 from .results import is_valid_result, run_path, valid_snapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -233,12 +235,25 @@ def run_preflight(repo_root, env, deps: Deps, *, check_control: bool = False, be
         add("harness_hash", "ok", "the criteria file matches the code's current harness hash")
     except ValueError as exc:
         add("harness_hash", "blocked", f"{exc}. Regenerate and commit the criteria before any run")
-    key = env.get("ANTHROPIC_API_KEY")
-    if isinstance(key, str) and key.strip():
-        add("api_key_present", "ok", "ANTHROPIC_API_KEY is set (its value is never shown)")
+    model = str(env.get("AGENTREADY_MODEL") or DEFAULT_MODEL).strip()
+    gemini = model.startswith("gemini-")
+    key_name = "GEMINI_API_KEY" if gemini else "ANTHROPIC_API_KEY"
+    if gemini and not GEMINI_MODEL.fullmatch(model):
+        add("model", "blocked", "AGENTREADY_MODEL is not a valid Gemini model name (for example gemini-3.5-flash-lite)")
     else:
-        add("api_key_present", "blocked", "ANTHROPIC_API_KEY is not set in the environment")
-    if deps.sdk_installed():
+        add("model", "ok", f"model: {_short(model, 80)} (every before and after run must use this same model)")
+    key = env.get(key_name)
+    if isinstance(key, str) and key.strip():
+        add("api_key_present", "ok", f"{key_name} is set (its value is never shown)")
+    else:
+        add("api_key_present", "blocked", f"{key_name} is not set in the environment")
+    if gemini:
+        try:
+            min_interval_from_env(env)
+            add("sdk_installed", "ok", "a Gemini model needs no SDK (it is called over HTTPS with httpx)")
+        except ValueError as exc:
+            add("sdk_installed", "blocked", str(exc))
+    elif deps.sdk_installed():
         add("sdk_installed", "ok", "the anthropic SDK is installed")
     else:
         add("sdk_installed", "blocked", "the anthropic SDK is not installed; run: pip install -e '.[runner]'")
