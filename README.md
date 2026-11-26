@@ -9,6 +9,7 @@ The wording, transcribed from the Homingo problem statement on 21 Nov 2026:
 > "We want the tools that make agents first-class users: interfaces, identity, permissions, payments, memory, sandboxes and testing built for agents rather than people."
 
 Re-check the quotation against the live page before submission, and remove it (do not reword it) if it differs.
+It matched the [official problem page](https://hackathon.homingo.co.in/problem-statements) rendered in Chrome on 26 Nov 2026.
 
 AgentReady is our interpretation of A1. It covers interfaces, identity, permissions and testing; it does not address payments, memory or sandboxes.
 
@@ -49,11 +50,11 @@ uvicorn app.main:app --port 8000
 
 Open `http://127.0.0.1:8000/`: paste a URL, prove control, read the score, review the fixes as diffs, approve. The server listens on 127.0.0.1 only. For local development only, `AGENTREADY_DEV=1` uses a fixed development secret (the tests set it). `AGENTREADY_CACHE` sets the cache directory (default `.cache`).
 
-Sites on a non-default port can only be verified with the meta tag (inside `<head>` on the home page), because a DNS TXT record proves control of a name, not of a service on a port.
+Sites on a non-default port for their URL scheme can only be verified with the meta tag (inside `<head>` on the home page), because a DNS TXT record proves control of a name, not of a service on a port. DNS verification accepts HTTP port 80 and HTTPS port 443; `http://host:443` and `https://host:80` need the meta tag.
 
-**MCP.** The same server exposes `audit_site`, `get_report` and `propose_fixes` at `http://localhost:8000/mcp`. It was tested with the official MCP Python client over real HTTP; it has not been tested with Claude Code. See [docs/mcp.md](docs/mcp.md).
+**MCP.** The same server exposes `audit_site`, `get_report` and `propose_fixes` at `http://localhost:8000/mcp`. The official MCP Python client covers tool calls over real HTTP. The Claude Code connection health check passed; model-driven Claude Code tool calls have not been tested. See [docs/mcp.md](docs/mcp.md).
 
-The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui/*.test.mjs`. The page itself was tested with a fake page, not in a real browser: [docs/ui.md](docs/ui.md) has a checklist to go through by eye.
+The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui/*.test.mjs`. The UI flow and layouts were also checked in headless Chrome and Firefox against a synthetic site. Safari and a real-site browser run remain: see [docs/ui.md](docs/ui.md).
 
 ## Running the benchmark
 
@@ -107,6 +108,10 @@ The report shows per-check agreement and false-positive rates. A failed readines
 
 ## Project layout
 
+The backend uses FastAPI, Uvicorn, httpx, Beautiful Soup, dnspython and the official MCP Python SDK. The runner uses
+Gemini's REST API or the optional Anthropic SDK. The interface uses plain HTML, CSS and JavaScript; tests use pytest
+and Node's test runner. Implementation and review used Claude Code and Codex.
+
 ```
 backend/app/          the API (fetch guard, ownership, checks, scoring, audit)
 backend/app/fixes/    fix generation, validation, diffs, approval queue
@@ -126,4 +131,4 @@ docs/                 documentation and the plans
 - [docs/mcp.md](docs/mcp.md): the MCP server, its tools and its safety limits.
 - [docs/ui.md](docs/ui.md): the web page, its security rules and a manual checklist.
 - [docs/demo-script.md](docs/demo-script.md): the 3-minute demo script.
-- [docs/submission-checklist.md](docs/submission-checklist.md): what only the owner can do before submitting.
+- [docs/submission-checklist.md](docs/submission-checklist.md): completed release checks and remaining submission work.

@@ -122,6 +122,31 @@ def test_dns_proof_counts_for_a_default_port_but_not_for_a_port(monkeypatch):
     assert c.post("/audit", json={"url": "https://example.com:8443/"}).status_code == 403
 
 
+@pytest.mark.parametrize("scheme,port,expected", [
+    ("http", 80, 200), ("https", 443, 200), ("http", 443, 403), ("https", 80, 403),
+])
+def test_dns_proof_requires_the_default_port_for_the_requested_scheme(monkeypatch, scheme, port, expected):
+    host = f"example.com:{port}"
+    origin = f"{scheme}://{host}"
+    token = main.make_token(host, main.SECRET)
+    lookups = []
+
+    def txt(name):
+        lookups.append(name)
+        return [f"agentready-verify={token}"]
+
+    c, fake = client(monkeypatch, {}, txt=txt)
+    response = c.post("/audit", json={"url": origin})
+
+    assert response.status_code == expected
+    if expected == 403:
+        assert lookups == []
+        assert fake.calls == [(f"{origin}/", False)]
+        assert response.json()["detail"]["dns_txt_name"] is None
+    else:
+        assert lookups == ["_agentready.example.com"]
+
+
 def test_dns_verification_makes_no_probe_request(monkeypatch):
     token = main.make_token("example.com", main.SECRET)
     probe, audit_f = FakeFetcher({}), FakeFetcher({})
@@ -193,6 +218,31 @@ def test_real_wiring_unverified_makes_one_request_and_creates_nothing(monkeypatc
     assert c.post("/audit", json={"url": B}).status_code == 403
     assert seen == [("x.test", "93.184.216.34", "/")]
     assert not (tmp_path / "cache").exists()
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_real_wiring_meta_verification_uses_the_requested_scheme(monkeypatch, tmp_path, scheme):
+    host = "x.test:8080"
+    origin = f"{scheme}://{host}"
+    seen = []
+
+    def handler(req):
+        seen.append((req.url.scheme, req.headers["host"]))
+        if req.url.scheme != scheme:
+            raise httpx.ConnectError("service does not support this scheme")
+        return httpx.Response(200, text=verified_home(host))
+
+    monkeypatch.setattr(main, "new_http_client", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(main, "GUARD_OPTIONS", {"sleep": lambda s: None})
+    monkeypatch.setattr(main, "CACHE_DIR", tmp_path / "cache")
+    main.app.dependency_overrides[main.get_txt_lookup] = lambda: (lambda name: [])
+    main.app.dependency_overrides[main.get_resolver] = lambda: public_resolver
+
+    response = TestClient(main.app).post("/audit", json={"url": origin})
+
+    assert response.status_code == 200
+    assert response.json()["site"] == origin
+    assert seen and all(request == (scheme, host) for request in seen)
 
 
 def test_real_wiring_audit_uses_nine_urls_pins_the_address_and_caches_per_snapshot(monkeypatch, tmp_path):

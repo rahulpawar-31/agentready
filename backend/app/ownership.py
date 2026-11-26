@@ -31,15 +31,16 @@ def _same(a: str, b: str) -> bool:
 
 
 def verify_ownership(domain, token, fetcher: Fetcher, txt_lookup=default_txt_lookup, *,
-                     dns_name: str | None = None, allow_dns: bool = True) -> Ownership:
+                     dns_name: str | None = None, allow_dns: bool = True, scheme: str = "https") -> Ownership:
     """`domain` is host[:port] (used for the root-page probe). `dns_name` is the TXT name to query
-    (hostname only); `allow_dns` is False for non-default ports, where only the meta tag counts."""
+    (hostname only); `allow_dns` is False for non-default ports, where only the meta tag counts.
+    `scheme` is the requested site's validated http(s) scheme."""
     expected = f"agentready-verify={token}"
     if allow_dns:
         for txt in txt_lookup(dns_name or f"_agentready.{domain}"):
             if _same(txt.strip(), expected):
                 return Ownership(True, "dns")
-    home = fetcher.get(f"https://{domain}/")
+    home = fetcher.get(f"{scheme}://{domain}/")
     if home.status == 200:
         soup = BeautifulSoup(home.body, "html.parser")
         for m in soup.find_all("meta", attrs={"name": "agentready-verification"}):

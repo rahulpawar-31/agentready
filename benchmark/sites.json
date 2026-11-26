@@ -1,4 +1,15 @@
 {
   "version": 1,
-  "sites": []
+  "sites": [
+    {
+      "host": "personal-ai-blue.vercel.app",
+      "owner_type": "team",
+      "verification": "meta",
+      "label": "personal-ai-blue.vercel.app.json",
+      "after_eligible": true,
+      "after_method": "live",
+      "permission_note": "",
+      "notes": "Owner supplied this Dayhand deployment for evaluation. Source: rahulpawar-31/Personal-AI. Public task labels await suitable contact and documentation URLs; the root is a client-rendered sign-in page."
+    }
+  ]
 }

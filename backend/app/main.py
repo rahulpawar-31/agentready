@@ -128,7 +128,7 @@ def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(
         raise HTTPException(422, "host does not resolve to a public address and cannot be audited")
     probe = build_probe_fetcher(ref.netloc, resolver=resolver)
     owner = verify_ownership(ref.netloc, make_token(ref.netloc, SECRET), probe, txt,
-                             dns_name=ref.dns_name, allow_dns=ref.dns_allowed)
+                             dns_name=ref.dns_name, allow_dns=ref.dns_allowed, scheme=ref.scheme)
     if not owner.verified:
         raise HTTPException(403, _instructions(ref))
     fetcher = build_audit_fetcher(ref.netloc, req.snapshot, resolver=resolver)   # the cache is created only now

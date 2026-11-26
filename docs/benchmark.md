@@ -63,7 +63,8 @@ Gemini API key" below). Without `AGENTREADY_SECRET` the commands stop with
 one sentence naming it (exit code 2) and make no request. Snapshot names must match `[A-Za-z0-9_-]{1,64}`, and
 `audits` is reserved (the audit reports live in `benchmark/results/audits/`).
 
-1. **Register the site** in `benchmark/sites.json` (see `benchmark/sites.example.json`). The file starts empty.
+1. **Register the site** in `benchmark/sites.json` (see `benchmark/sites.example.json`). Dayhand is registered as the first
+   verified candidate; its task label is pending confirmation of suitable public pages.
 2. **Write the label** by hand after looking at the site yourself: `benchmark/labels/<host>.json`, format in
    `benchmark/labels/README.md`. Commit the label. It must be committed before any run.
 3. **Prove control**: start the API, then add the meta tag (inside `<head>` on the home page) or the DNS TXT record that
@@ -94,6 +95,16 @@ one sentence naming it (exit code 2) and make no request. Snapshot names must ma
 
    A run whose model call failed or whose tools broke is marked **invalid**, kept, and rerun with the same command
    (valid results are never overwritten). Invalid runs are reported separately and never counted as failures.
+
+   **Before audit accuracy (optional):** if the committed label carries `audit_checks` (see
+   `benchmark/labels/README.md`), record the baseline audit now, **before deploying any fixes**:
+
+       cd backend
+       export AGENTREADY_SECRET=<the same value the API server uses>
+       python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot before
+
+   Task runs do not necessarily cache every audit path. Running this command after deployment could mix cached
+   baseline pages with newly deployed pages, so it cannot reconstruct the original baseline then.
 6. **Propose fixes**: audit the site in the web page (or `POST /audit`), then "Propose fixes". Review each diff.
 7. **Approve, download, deploy**: the owner approves a fix, then downloads or copies the file and **deploys it
    themselves**. Approving changes nothing on the site, and AgentReady never deploys or writes to a site.
@@ -111,12 +122,12 @@ one sentence naming it (exit code 2) and make no request. Snapshot names must ma
    (such as the page's `rerun-...` names) the runner fetches its own. Either way, only create the `after` cache after
    the new files are live, because a cached page is never refetched inside its snapshot. Use the same label, the same
    model and the same limits as the before runs (they are recorded and compared).
-10. **Audit accuracy (optional)**, only for a site whose committed label carries `audit_checks` (see
-    `benchmark/labels/README.md`). Run one audit per site and snapshot, once for `before` and once for `after`:
+10. **After audit accuracy (optional)**, only for an `after_eligible` site whose committed label carries `audit_checks`.
+    With the updated files live, record the `after` audit. The `before` audit must already have been recorded in step 5,
+    before deployment:
 
         cd backend
         export AGENTREADY_SECRET=<the same value the API server uses>
-        python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot before
         python -m app.runner.audit_cli --label ../benchmark/labels/<host>.json --snapshot after
 
     The command proves control first, uses the same guard as the API, records the findings immutably in
@@ -183,8 +194,9 @@ What to know before you choose it (from Google's Gemini API pages, read 25 Nov 2
   limit is still reached, or the API asks for a wait longer than 90 seconds (a used-up daily quota, which resets at
   midnight Pacific time), the batch **stops**: valid results are kept, and you rerun the same command later in the same
   snapshot.
-- **No live call has been tested yet.** The adapter is tested against a fake Gemini server. Run the one live test once
-  with your key before the benchmark (it makes a few model calls and fetches example.com):
+- **Live integration check passed on 26 Nov 2026** with `gemini-3.5-flash-lite` and an environment-supplied key, using
+  `tests/test_runner_live.py` against example.com. This validates the integration, not benchmark performance. Run it
+  again with the key and model you will use before the benchmark:
 
        cd backend
        AGENTREADY_LIVE=1 GEMINI_API_KEY=... python -m pytest -q -k gemini tests/test_runner_live.py
