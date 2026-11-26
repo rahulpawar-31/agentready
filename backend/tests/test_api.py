@@ -195,6 +195,31 @@ def test_real_wiring_unverified_makes_one_request_and_creates_nothing(monkeypatc
     assert not (tmp_path / "cache").exists()
 
 
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_real_wiring_meta_verification_uses_the_requested_scheme(monkeypatch, tmp_path, scheme):
+    host = "x.test:8080"
+    origin = f"{scheme}://{host}"
+    seen = []
+
+    def handler(req):
+        seen.append((req.url.scheme, req.headers["host"]))
+        if req.url.scheme != scheme:
+            raise httpx.ConnectError("service does not support this scheme")
+        return httpx.Response(200, text=verified_home(host))
+
+    monkeypatch.setattr(main, "new_http_client", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(main, "GUARD_OPTIONS", {"sleep": lambda s: None})
+    monkeypatch.setattr(main, "CACHE_DIR", tmp_path / "cache")
+    main.app.dependency_overrides[main.get_txt_lookup] = lambda: (lambda name: [])
+    main.app.dependency_overrides[main.get_resolver] = lambda: public_resolver
+
+    response = TestClient(main.app).post("/audit", json={"url": origin})
+
+    assert response.status_code == 200
+    assert response.json()["site"] == origin
+    assert seen and all(request == (scheme, host) for request in seen)
+
+
 def test_real_wiring_audit_uses_nine_urls_pins_the_address_and_caches_per_snapshot(monkeypatch, tmp_path):
     c, seen = real_client(monkeypatch, tmp_path)
     r = c.post("/audit", json={"url": B})

@@ -23,8 +23,10 @@ lifespan is not running gets a 503 with a short JSON message. For Claude Code th
 
     claude mcp add --transport http agentready http://localhost:8000/mcp
 
-That command has **not** been run against a real Claude Code install for this project (it edits the user's Claude
-configuration). What was tested: the official MCP Python client, over real HTTP, against a real uvicorn server
+On 26 Nov 2026, Claude Code 2.1.332 added a temporary local configuration for a real uvicorn server and
+`claude mcp get` reported **Connected**. The check used an isolated configuration directory, leaving the user's normal
+Claude configuration unchanged. Model-driven tool calls through Claude Code have not been tested: that installation
+was not signed in. Tool-call coverage comes from the official MCP Python client over real HTTP
 (`tests/test_mcp_http.py` and the end-to-end run described in the pull request).
 
 ## The tools

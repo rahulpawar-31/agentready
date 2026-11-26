@@ -9,6 +9,7 @@ The wording, transcribed from the Homingo problem statement on 21 Nov 2026:
 > "We want the tools that make agents first-class users: interfaces, identity, permissions, payments, memory, sandboxes and testing built for agents rather than people."
 
 Re-check the quotation against the live page before submission, and remove it (do not reword it) if it differs.
+It matched the [official problem page](https://hackathon.homingo.co.in/problem-statements) rendered in Chrome on 26 Nov 2026.
 
 AgentReady is our interpretation of A1. It covers interfaces, identity, permissions and testing; it does not address payments, memory or sandboxes.
 
@@ -51,9 +52,9 @@ Open `http://127.0.0.1:8000/`: paste a URL, prove control, read the score, revie
 
 Sites on a non-default port can only be verified with the meta tag (inside `<head>` on the home page), because a DNS TXT record proves control of a name, not of a service on a port.
 
-**MCP.** The same server exposes `audit_site`, `get_report` and `propose_fixes` at `http://localhost:8000/mcp`. It was tested with the official MCP Python client over real HTTP; it has not been tested with Claude Code. See [docs/mcp.md](docs/mcp.md).
+**MCP.** The same server exposes `audit_site`, `get_report` and `propose_fixes` at `http://localhost:8000/mcp`. The official MCP Python client covers tool calls over real HTTP. The Claude Code connection health check passed; model-driven Claude Code tool calls have not been tested. See [docs/mcp.md](docs/mcp.md).
 
-The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui/*.test.mjs`. The page itself was tested with a fake page, not in a real browser: [docs/ui.md](docs/ui.md) has a checklist to go through by eye.
+The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui/*.test.mjs`. The UI flow and layouts were also checked in headless Chrome against a synthetic site. Firefox, Safari and a real-site browser run remain: see [docs/ui.md](docs/ui.md).
 
 ## Running the benchmark
 

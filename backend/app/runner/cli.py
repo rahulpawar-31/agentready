@@ -116,7 +116,7 @@ def default_deps() -> Deps:
     def verify(ref: SiteRef) -> bool:
         probe = api.build_probe_fetcher(ref.netloc, resolver=default_resolver)
         owner = verify_ownership(ref.netloc, make_token(ref.netloc, api.SECRET), probe, default_txt_lookup,
-                                 dns_name=ref.dns_name, allow_dns=ref.dns_allowed)
+                                 dns_name=ref.dns_name, allow_dns=ref.dns_allowed, scheme=ref.scheme)
         return owner.verified
 
     return Deps(verify=verify, resolver=default_resolver,

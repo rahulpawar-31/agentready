@@ -421,3 +421,19 @@ def test_the_default_deps_build_the_client_through_the_factory(monkeypatch):
     from app.runner.llm import make_client
     monkeypatch.setenv("AGENTREADY_DEV", "1")
     assert cli.default_deps().make_llm is make_client
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_default_verification_uses_the_requested_scheme(monkeypatch, scheme):
+    from app import main as api
+    from app.audit import parse_url
+
+    host = "x.test:8080"
+    origin = f"{scheme}://{host}"
+    token = api.make_token(host, api.SECRET)
+    html = f'<html><head><meta name="agentready-verification" content="{token}"></head></html>'
+    probe = FakeFetcher({f"{origin}/": page(f"{origin}/", html)})
+    monkeypatch.setattr(api, "build_probe_fetcher", lambda host, **kwargs: probe)
+
+    assert cli.default_deps().verify(parse_url(origin))
+    assert probe.calls == [(f"{origin}/", False)]
