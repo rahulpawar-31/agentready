@@ -51,14 +51,16 @@ def _clean_stores():
         store.clear()
 
 
-def test_audit_response_is_unchanged_and_the_baseline_comes_from_the_cache(monkeypatch, tmp_path):
+def test_audit_response_includes_request_evidence_and_baseline_comes_from_the_cache(monkeypatch, tmp_path):
     underlying = FakeFetcher(pages_for({"/openapi.json": json.dumps(SPEC)}))
     cached = CachedFetcher(underlying, tmp_path)
     c, _ = client(monkeypatch, pages_for({"/openapi.json": json.dumps(SPEC)}), audit_fetcher=cached)
     r = c.post("/audit", json={"url": B})
     assert r.status_code == 200
     body = r.json()
-    assert set(body) == {"id", "site", "score", "category_scores", "findings", "unscored", "score_status"}
+    assert set(body) == {"id", "site", "score", "category_scores", "findings", "unscored", "score_status",
+                         "request_log", "verification_request_log"}
+    assert body["request_log"] is None and body["verification_request_log"] is None  # fake has no guard evidence
     fetched = [u for u, _ in underlying.calls]
     assert len(fetched) == len(set(fetched)) == 9                  # the audit's nine paths; the baseline added none
     baseline = main._baselines[body["id"]]

@@ -78,8 +78,8 @@ def main(argv=None, *, deps=None, out=print, repo_root=REPO_ROOT) -> int:
     except (OSError, ValueError) as exc:
         out(f"Refused: {exc}")
         return 2
-    if label.audit_checks is None:
-        out("Refused: commit the complete audit_checks pass/fail labels before running this audit.")
+    if label.audit_checks_for(args.snapshot) is None:
+        out("Refused: commit complete audit_checks pass/fail labels for this snapshot before running this audit.")
         return 2
     problems = git_problems([label_path], repo_root=repo_root)
     if problems:
@@ -111,6 +111,7 @@ def main(argv=None, *, deps=None, out=print, repo_root=REPO_ROOT) -> int:
             return 2
         fetcher = deps.make_fetcher(ref.netloc, args.snapshot)
         report = audit(ref.origin, fetcher)
+        report.verification_request_log = getattr(deps, "verification_log", lambda: None)()
     except Exception as exc:  # no page or token text is included in exception output
         out(f"Audit failed ({type(exc).__name__}); no report was recorded.")
         return 2

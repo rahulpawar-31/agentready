@@ -30,11 +30,28 @@ overwrites run files, or claims the measurements generalize beyond the labelled 
 counted in task success (FR-6.4). Text read from result files is clipped, stripped of control characters and made safe for
 Markdown before it is printed.
 
+Task results and audit reports include `request_log` and `verification_request_log`: actual outbound GETs from
+the guard, including each redirect hop, with the pinned address and response status. Blocked targets and cache
+hits send no request and add no entry. A batch's verification requests are attached to its first task result
+only, including an invalid attempt, so summing retained results does not count verification repeatedly.
+Logs contain no response bodies, headers or query values; `query_redacted` records whether a query was removed.
+Each task snapshot and audit snapshot reports boundary integrity from these logs. Missing logs are explicitly
+incomplete (or not measured if there are no records), never evidence of zero outbound requests. `verified`
+means all recorded requests stayed on the labelled host with public pinned addresses and GET methods;
+it describes the recorded runs only. Invalid attempts retained for reruns are included in request totals.
+
+The criteria version is now 3, with a new harness hash for the required offer/pricing pattern and request-log
+format. Replace legacy flat audit labels with snapshot maps and commit the completed labels and criteria
+before collecting new runs. Older results remain readable, but missing logs cannot verify boundary integrity,
+and results with the old harness hash cannot be paired with new runs. No measured benchmark was collected
+before this format change.
+
 ## Audit-check accuracy
 
-Each site label also carries an `audit_checks` map with all 13 check IDs. A value of `true` means a
+Each site label also carries `audit_checks.before` and `audit_checks.after` maps, each with all 13 check IDs. A value of `true` means a
 human's preregistered expected outcome is that the check passes; `false` means it should fail. Set
-these labels before running an audit and commit the label file. The example booleans are illustrative
+both snapshot maps before the first run and commit the label file. Use the expected deployed outcomes for after;
+the report compares each audit against its own snapshot's map. Flat maps are rejected. The example booleans are illustrative
 only and must be replaced after independent inspection.
 
 Run one owner-verified audit per site and snapshot:
@@ -74,6 +91,7 @@ The command exits nonzero when it finds any of these data issues (each is listed
   kept in the snapshot counts, flagged, and never paired;
 - more than one criteria hash, harness hash, model or answering model inside one snapshot;
 - an `after` result for a site that is not `after_eligible` in `benchmark/sites.json` (when that file exists);
+- a recorded request log with an off-host URL, a non-public pinned address, a method other than GET or malformed entries;
 - a snapshot name that has no directory (a typo), unless both names are missing, which is the "no results yet" report.
 
 Missing repeats are shown as incomplete samples and never counted as failures. A missing git commit on a run is a warning,

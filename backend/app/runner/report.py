@@ -15,7 +15,9 @@ import subprocess
 import unicodedata
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
+from ..fetch import is_public
 from .labels import AUDIT_CHECK_IDS, load_label
 from .results import read_run_files, site_slug, valid_snapshot
 from .tasks import TASK_IDS
@@ -122,12 +124,62 @@ def _counts(keys) -> dict:
     return {"sites": len({k[0] for k in keys}), "cells": len({(k[0], k[1]) for k in keys}), "runs": len(keys)}
 
 
+def _boundary() -> dict:
+    return {"status": "not measured", "records": 0, "outbound_requests": 0,
+            "missing_logs": 0, "off_host_requests": 0, "invalid_entries": 0}
+
+
+def _record_boundary(summary: dict, result: dict, host: str) -> bool:
+    """Inspect actual guard logs, including invalid attempts; never treat missing evidence as zero traffic."""
+    summary["records"] += 1
+    violations = 0
+    for field in ("request_log", "verification_request_log"):
+        log = result.get(field)
+        if log is None:
+            summary["missing_logs"] += 1
+            continue
+        if not isinstance(log, list):
+            summary["invalid_entries"] += 1
+            violations += 1
+            continue
+        for entry in log:
+            summary["outbound_requests"] += 1
+            try:
+                if not isinstance(entry, dict):
+                    raise ValueError()
+                url = urlparse(entry.get("url", ""))
+                off_host = url.netloc.lower() != host.lower()
+                summary["off_host_requests"] += int(off_host)
+                status = entry.get("status")
+                valid = (url.scheme in ("http", "https") and bool(url.hostname)
+                         and not url.username and not url.password and not url.query and not url.fragment
+                         and entry.get("method") == "GET" and is_public(entry.get("address", ""))
+                         and type(status) is int and 0 <= status <= 599
+                         and type(entry.get("query_redacted")) is bool)
+                if not valid:
+                    raise ValueError()
+                violations += int(off_host)
+            except (ValueError, TypeError, AttributeError):
+                summary["invalid_entries"] += 1
+                violations += 1
+    summary["status"] = ("violated" if summary["off_host_requests"] or summary["invalid_entries"] else
+                         "incomplete" if summary["missing_logs"] else "verified")
+    return bool(violations)
+
+
+def _boundary_text(summary: dict) -> str:
+    return (f"Boundary integrity: {summary['status']}; recorded HTTP requests: {summary['outbound_requests']}; "
+            f"off-host requests: {summary['off_host_requests']}; missing logs: {summary['missing_logs']}; "
+            f"invalid log entries: {summary['invalid_entries']}.")
+
+
 def _load_snapshot(root: Path, snapshot: str, labels: dict[str, dict], repeats: int, check: dict) -> tuple[dict, list[str]]:
     """`check` carries what the runs are verified against: criteria_sha, criteria_harness, eligible (hosts allowed an
     after run, or None) and is_after."""
     problems: list[str] = []
     runs_by_key = {}
     invalid_by_key = defaultdict(list)
+    boundary = _boundary()
     files = read_run_files(root, snapshot, problems)
     problems = [_text(p) for p in problems]
 
@@ -173,6 +225,8 @@ def _load_snapshot(root: Path, snapshot: str, labels: dict[str, dict], repeats: 
             problems.append(f"{snapshot}/{rel}: 'valid' is missing or not true/false")
             return
         key = (site, task, repeat)
+        if _record_boundary(boundary, result, site):
+            problems.append(f"{snapshot}/{rel}: request log violates the verified-host/public-address GET boundary")
         if invalid_file or valid_flag is False:
             invalid_by_key[key].append({"reason": _text(result.get("reason") or "invalid run"),
                                         "error": _text(result.get("error") or "")})
@@ -263,6 +317,7 @@ def _load_snapshot(root: Path, snapshot: str, labels: dict[str, dict], repeats: 
 
     summary = {
         "snapshot": snapshot,
+        "boundary_integrity": boundary,
         "labelled_sites": len(labels),
         "sites_with_valid_runs": len({site for site, _, _ in runs_by_key}),
         "valid_runs": len(valid), "successes": successes,
@@ -336,6 +391,7 @@ def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> 
     base = root / "audits" / snapshot
     problems: list[str] = []
     reports: dict[str, dict] = {}
+    boundary = _boundary()
     if os.path.islink(root / "audits") or os.path.islink(base):
         problems.append(f"audits/{snapshot} is a symlink and was ignored")
     elif base.exists():
@@ -365,6 +421,10 @@ def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> 
             if row.get("label_sha256") != labels[site]["label_sha256"]:
                 problems.append(f"audits/{snapshot}/{path.name}: site label changed after this audit was recorded")
                 continue
+            expected = labels[site]["audit_checks"]
+            if expected is None or snapshot not in expected:
+                problems.append(f"audits/{snapshot}/{path.name}: no preregistered audit check labels for this snapshot")
+                continue
             if site in reports:
                 problems.append(f"audits/{snapshot}/{path.name}: duplicate audit report for {site}")
                 continue
@@ -392,13 +452,15 @@ def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> 
                 problems.append(f"audits/{snapshot}/{path.name}: malformed findings")
                 continue
             reports[site] = by_check
+            if _record_boundary(boundary, row, site):
+                problems.append(f"audits/{snapshot}/{path.name}: request log violates the verified-host/public-address GET boundary")
 
     checks = {}
     for check_id in AUDIT_CHECK_IDS:
         counts = {"true_positive": 0, "false_positive": 0, "true_negative": 0, "false_negative": 0,
                   "unreachable": 0, "missing": 0}
         for site, label in labels.items():
-            expected_checks = label["audit_checks"]
+            expected_checks = (label["audit_checks"] or {}).get(snapshot)
             if expected_checks is None:
                 continue
             observed = reports.get(site, {}).get(check_id)
@@ -427,14 +489,15 @@ def _load_audit_snapshot(root: Path, snapshot: str, labels: dict[str, dict]) -> 
             if support else None,
             "false_positive_rate_pct": round(100 * counts["false_positive"] / negatives, 1) if negatives else None,
         }
-    labelled = sum(label["audit_checks"] is not None for label in labels.values())
+    labelled = sum(snapshot in (label["audit_checks"] or {}) for label in labels.values())
     measured = sum(item["support"] for item in checks.values())
     missing_reports = sorted(site for site, label in labels.items()
-                             if label["audit_checks"] is not None and site not in reports)
-    with_reports = sum(site in reports for site, label in labels.items() if label["audit_checks"] is not None)
+                             if snapshot in (label["audit_checks"] or {}) and site not in reports)
+    with_reports = sum(site in reports for site, label in labels.items() if snapshot in (label["audit_checks"] or {}))
     return {
         "snapshot": snapshot,
         "status": "measured" if measured else "not measured",
+        "boundary_integrity": boundary,
         "labelled_sites": labelled,
         "small_sample": {"threshold": SMALL_SAMPLE, "labelled_sites_with_reports": with_reports,
                          "is_small": with_reports < SMALL_SAMPLE},
@@ -521,6 +584,7 @@ def to_markdown(report: dict) -> str:
                   f"- Coverage: {counts['sites']} sites, {counts['cells']} site-task cells, {counts['runs']} runs",
                   f"- Sites with results: {snap['sites_with_valid_runs']}/{snap['labelled_sites']}",
                   f"- Invalid runs excluded: {snap['invalid_runs']}", "",
+                  _boundary_text(snap["boundary_integrity"]), "",
                   "| Task | Valid runs | Successes | Success |", "|---|---:|---:|---:|"]
         for task, item in snap["per_task"].items():
             lines.append(f"| {task} | {item['valid_runs']} | {item['successes']} | {_pct(item['success_rate_pct'])} |")
@@ -591,6 +655,7 @@ def to_markdown(report: dict) -> str:
         lines += [f"### {key.title()} ({_md(audit['snapshot'])})", "",
                   f"Status: {audit['status']}; labelled sites: {audit['labelled_sites']}; "
                   f"sites with reports: {audit['sites_with_reports']}.", ""]
+        lines += [_boundary_text(audit["boundary_integrity"]), ""]
         if audit["labelled_sites"]:
             n = audit["small_sample"]["labelled_sites_with_reports"]
             lines += [f"Based on {n} labelled site{'s' if n != 1 else ''} with a saved audit. Each rate is over the "

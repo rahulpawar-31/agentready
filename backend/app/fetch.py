@@ -16,6 +16,7 @@ from .models import Page
 
 REDIRECTS = {301, 302, 303, 307, 308}
 MAX_BODY_BYTES = 2_000_000
+REQUEST_LOG_VERSION = 1
 _V4_NOT_PUBLIC = tuple(ipaddress.ip_network(n) for n in ("192.0.0.0/24", "192.88.99.0/24"))
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 _V4_COMPATIBLE = ipaddress.ip_network("::/96")
@@ -141,10 +142,16 @@ class GuardedFetcher:
         self._budget, self._used = max_requests, 0
         self._clock, self._sleep = clock, sleep
         self._last: float | None = None
+        self._request_log: list[dict] = []
 
     @property
     def requests_used(self) -> int:
         return self._used
+
+    @property
+    def request_log(self) -> list[dict]:
+        """Actual outbound attempts, including redirect hops; no headers, bodies or query values."""
+        return [dict(entry) for entry in self._request_log]
 
     def _inside(self, url: str) -> bool:
         p = urlparse(url)
@@ -175,7 +182,13 @@ class GuardedFetcher:
                 return self._blocked(url, f"blocked: {self.host} resolves to a non-public address")
             self._used += 1
             self._throttle()
-            page = self._plain.get(url, address=min(addrs, key=address_key))
+            address = min(addrs, key=address_key)
+            parsed = urlparse(url)
+            entry = {"method": "GET", "url": parsed._replace(query="", fragment="").geturl(),
+                     "query_redacted": bool(parsed.query), "address": address, "status": 0}
+            self._request_log.append(entry)
+            page = self._plain.get(url, address=address)
+            entry["status"] = page.status
             if page.status not in REDIRECTS:
                 break
             location = page.headers.get("location")
@@ -188,6 +201,18 @@ class GuardedFetcher:
         else:
             return self._blocked(url, f"blocked: more than {self._max} redirects")
         return page
+
+
+def request_log_for(fetcher) -> list[dict] | None:
+    """Find the real guard behind cache/recording wrappers. None means evidence is unavailable, not zero requests."""
+    node = fetcher
+    for _ in range(5):
+        if isinstance(node, GuardedFetcher):
+            return node.request_log
+        node = getattr(node, "_inner", None)
+        if node is None:
+            break
+    return None
 
 
 class CachedFetcher:

@@ -95,6 +95,33 @@ def test_redirect_off_the_verified_host_is_never_requested():
     p = g.get("https://x.test/a")
     assert p.status == 0 and "outside" in p.error
     assert inner.calls == ["https://x.test/a"]
+    assert [row["url"] for row in g.request_log] == inner.calls
+
+
+def test_request_log_records_actual_redirect_hops_and_redacts_query_values(tmp_path):
+    from app.fetch import request_log_for
+    first = "https://x.test/a?token=private-value"
+    g, inner = guard({first: Page(first, 302, {"location": "/b"}, ""),
+                      "https://x.test/b": Page("https://x.test/b", 200, {}, "secret body")})
+    cached = CachedFetcher(g, tmp_path)
+    cached.get(first)
+    cached.get(first)
+    log = request_log_for(cached)
+    assert log == [
+        {"method": "GET", "url": "https://x.test/a", "query_redacted": True,
+         "address": "93.184.216.34", "status": 302},
+        {"method": "GET", "url": "https://x.test/b", "query_redacted": False,
+         "address": "93.184.216.34", "status": 200}]
+    assert len(inner.calls) == 2
+    log[0]["url"] = "changed"
+    assert g.request_log[0]["url"] == "https://x.test/a"
+
+
+def test_blocked_dns_and_host_requests_have_no_outbound_log_entries():
+    g, inner = guard({}, resolver=lambda h: ["127.0.0.1"])
+    g.get("https://x.test/")
+    g.get("https://other.test/")
+    assert inner.calls == g.request_log == []
 
 
 def test_redirect_loop_is_stopped():

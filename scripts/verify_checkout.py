@@ -15,7 +15,7 @@ Steps (the first failure stops the run and the rest are reported as SKIP):
 
 Everything happens under a temporary directory that is removed at the end (--keep keeps it). The working repository is
 never modified. The only network use is `git clone` of the chosen source, `git ls-remote` of the remote that is being
-compared with, and `pip install`. POSIX only.
+compared with, `pip install`, and the ownership-token smoke check's public-host DNS validation (no site HTTP fetch). POSIX only.
 
 Safety of the arguments: the source and ref are refused when they start with '-', contain '::' (git transport helpers
 such as ext:: and fd::) or control characters, or (for the ref) anything outside letters, digits and ._/@+-. Git runs

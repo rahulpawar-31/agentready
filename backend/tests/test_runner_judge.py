@@ -2,7 +2,7 @@ from app.runner.judge import Answer, judge
 from app.runner.labels import TaskLabel
 
 ORIGIN = "https://x.test"
-MAIN = TaskLabel(urls=("x.test/pricing",))
+MAIN = TaskLabel(urls=("x.test/pricing",), quote_pattern=r"plans start at \$19")
 FORM = TaskLabel(urls=("x.test/contact",), required_fields=(("email",), ("message", "your message")))
 DOCS = TaskLabel(urls=("x.test/docs",))
 NODOCS = TaskLabel(none_exists=True)
@@ -102,7 +102,15 @@ def test_c2_quote_pattern_must_match_when_the_label_sets_one():
 def test_c3_seen_text_is_a_list_of_everything_shown_and_the_quote_may_be_in_any():
     seen = {"x.test/pricing": ["Plans start at $19 per month", '{"name": "Acme"}']}
     assert j("main_info", Answer(url="/pricing", quote="Plans start at $19 per month"), MAIN, seen=seen).success
-    assert j("main_info", Answer(url="/pricing", quote='{"name": "Acme"}'), MAIN, seen=seen).success
+    assert j("main_info", Answer(url="/pricing", quote='{"name": "Acme"}'), MAIN, seen=seen).reason == "quote_pattern_mismatch"
+
+
+def test_main_info_cannot_pass_without_an_independent_offer_label():
+    missing = TaskLabel(urls=("x.test/pricing",))
+    assert j("main_info", Answer(url="/pricing", quote="Plans start at $19 per month"), missing).reason == "missing_quote_pattern"
+    boilerplate = {"x.test/pricing": "Copyright 2026 Acme. Plans start at $19 per month."}
+    assert j("main_info", Answer(url="/pricing", quote="Copyright 2026 Acme"), MAIN,
+             seen=boilerplate).reason == "quote_pattern_mismatch"
 
 
 def test_c5_m1_unparseable_urls_are_wrong_page_not_a_crash_and_spaces_are_stripped():

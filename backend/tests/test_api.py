@@ -65,6 +65,15 @@ def test_ownership_token_endpoint_gives_both_methods(monkeypatch):
     assert r["dns_txt_name"] == "_agentready.x.test" and r["token"] in r["meta_tag"]
 
 
+@pytest.mark.parametrize("answers", [[], ["127.0.0.1"], ["10.0.0.1"], ["93.184.216.34", "10.0.0.1"]])
+def test_ownership_instructions_require_public_dns_and_make_no_site_request(monkeypatch, answers):
+    c, fake = client(monkeypatch, {}, resolver=lambda host: answers)
+    response = c.get("/ownership-token", params={"domain": "x.test"})
+    assert response.status_code == 422
+    assert "token" not in response.json() and "meta_tag" not in response.json()
+    assert fake.calls == []
+
+
 def test_ownership_token_for_a_port_has_its_own_token_and_no_dns_instructions(monkeypatch):
     c, _ = client(monkeypatch, {})
     plain = c.get("/ownership-token", params={"domain": "example.com"}).json()
@@ -251,14 +260,20 @@ def test_real_wiring_audit_uses_nine_urls_pins_the_address_and_caches_per_snapsh
     assert r.status_code == 200
     assert len(seen) == 10 and len({p for _, _, p in seen}) == 9          # probe + 9 audit requests
     assert {h for h, _, _ in seen} == {"x.test"} and {ip for _, ip, _ in seen} == {"93.184.216.34"}
+    logs = r.json()
+    assert len(logs["request_log"]) == 9 and len(logs["verification_request_log"]) == 1
+    assert {row["url"] for row in logs["request_log"]} == {B + path for path in ALL_NINE}
+    assert all(row["address"] == "93.184.216.34" and row["method"] == "GET"
+               for row in logs["request_log"] + logs["verification_request_log"])
     dirs = [d.name for d in (tmp_path / "cache").iterdir()]
     assert len(dirs) == 1 and len(dirs[0]) == 16 and all(ch in "0123456789abcdef" for ch in dirs[0])
     cached = [p.read_text() for p in (tmp_path / "cache").rglob("*.json")]
     assert cached and not any("hunter2" in t or "refs/heads" in t for t in cached)   # secrets never hit disk
     assert "hunter2" not in r.text and "DB_PASSWORD" not in r.text
     before = len(seen)
-    c.post("/audit", json={"url": B})                                         # same snapshot: cache hits
+    again = c.post("/audit", json={"url": B})                                 # same snapshot: cache hits
     assert [p for _, _, p in seen[before:]] == ["/", "/.env", "/.git/HEAD"]    # probe + the two never-cached paths
+    assert len(again.json()["request_log"]) == 2 and len(again.json()["verification_request_log"]) == 1
     before = len(seen)
     c.post("/audit", json={"url": B, "snapshot": "after"})                     # new snapshot: fetched fresh
     assert len(seen) - before == 10

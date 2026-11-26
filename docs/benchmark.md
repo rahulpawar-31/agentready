@@ -10,7 +10,7 @@ Three tasks per site, judged by code against a hand label written beforehand (ne
 
 | Task | Success means |
 |---|---|
-| `main_info` | the agent fetched the labelled page and quoted text that is on it |
+| `main_info` | the agent fetched the labelled page and quoted text on it that matches the required owner-labelled offer/pricing pattern |
 | `contact_form` | the agent fetched the labelled contact page and named every required field |
 | `docs_api` | the agent fetched the labelled docs or API page, or looked and correctly said none exists |
 
@@ -22,8 +22,8 @@ Not counted: the OpenAPI-to-MCP stub (FR-6.4). It is validated and can be shown 
 client for it, so the results table excludes it.
 
 Audit-check accuracy is a **separate** measurement and only exists for a site whose label carries `audit_checks` (the
-owner's own expected pass or fail for each of the 13 checks, written and committed **before** looking at any audit of
-that site) and that has a saved audit made with the `audit_cli` command (step 10). Without those the report says
+owner's own expected pass or fail for each of the 13 checks **per snapshot**, with both before and after maps committed
+before the first run) and that has a saved audit made with the `audit_cli` command (steps 5 and 10). Without those the report says
 "not measured" and prints no percentage; it never infers expected outcomes from task results. Those rates describe how
 well the static-HTML checks agreed with the owner's own labels on the sites tested, with the sample size printed next to
 them, and are not a measure of agent performance. The owner's labels are not verified by the tool: write them first.
@@ -96,8 +96,8 @@ one sentence naming it (exit code 2) and make no request. Snapshot names must ma
    A run whose model call failed or whose tools broke is marked **invalid**, kept, and rerun with the same command
    (valid results are never overwritten). Invalid runs are reported separately and never counted as failures.
 
-   **Before audit accuracy (optional):** if the committed label carries `audit_checks` (see
-   `benchmark/labels/README.md`), record the baseline audit now, **before deploying any fixes**:
+   **Before audit accuracy (required for the PRD evaluation):** commit snapshot-specific `audit_checks` (see
+   `benchmark/labels/README.md`) and record the baseline audit now, **before deploying any fixes**:
 
        cd backend
        export AGENTREADY_SECRET=<the same value the API server uses>
@@ -122,7 +122,7 @@ one sentence naming it (exit code 2) and make no request. Snapshot names must ma
    (such as the page's `rerun-...` names) the runner fetches its own. Either way, only create the `after` cache after
    the new files are live, because a cached page is never refetched inside its snapshot. Use the same label, the same
    model and the same limits as the before runs (they are recorded and compared).
-10. **After audit accuracy (optional)**, only for an `after_eligible` site whose committed label carries `audit_checks`.
+10. **After audit accuracy (required for the PRD evaluation)**, only for an `after_eligible` site whose committed label carries `audit_checks.after`.
     With the updated files live, record the `after` audit. The `before` audit must already have been recorded in step 5,
     before deployment:
 

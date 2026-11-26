@@ -10,7 +10,7 @@ from app.runner.tasks import STEP_LIMIT, TASK_IDS, TASKS, system_prompt
 GOOD = {
     "site": "https://x.test",
     "tasks": {
-        "main_info": {"urls": ["https://x.test/pricing"]},
+        "main_info": {"urls": ["https://x.test/pricing"], "quote_pattern": r"plans start at \$19"},
         "contact_form": {"urls": ["https://x.test/contact"],
                          "required_fields": ["email", ["message", "your message"]]},
         "docs_api": {"none_exists": True},
@@ -40,11 +40,21 @@ def test_valid_label_loads_and_is_normalised(tmp_path):
 
 def test_audit_check_labels_must_cover_every_check_with_real_booleans(tmp_path):
     audit_checks = {check: True for check in AUDIT_CHECK_IDS}
-    assert load_label(write(tmp_path, dict(GOOD, audit_checks=audit_checks))).audit_checks == audit_checks
+    expected = {"before": audit_checks, "after": dict(audit_checks, llms_txt=False)}
+    label = load_label(write(tmp_path, dict(GOOD, audit_checks=expected)))
+    assert label.audit_checks_for("before") == audit_checks
+    assert label.audit_checks_for("after")["llms_txt"] is False
+    assert label.audit_checks_for("unknown") is None
     for bad in (dict(audit_checks, surprise=True), {k: v for k, v in audit_checks.items() if k != "robots_ai"},
                 dict(audit_checks, robots_ai=1)):
         with pytest.raises(ValueError, match="audit check|audit_checks"):
-            load_label(write(tmp_path, dict(GOOD, audit_checks=bad)))
+            load_label(write(tmp_path, dict(GOOD, audit_checks={"before": bad})))
+
+
+@pytest.mark.parametrize("bad", [{"robots_ai": True}, {}, {"before\n": {}}, {"audits": {}}])
+def test_flat_or_invalid_snapshot_audit_labels_are_refused(tmp_path, bad):
+    with pytest.raises(ValueError, match="audit_checks"):
+        load_label(write(tmp_path, dict(GOOD, audit_checks=bad)))
 
 
 def test_normalise_url_ignores_scheme_fragment_trailing_slash_and_host_case():
@@ -110,6 +120,13 @@ def test_c2_quote_pattern_is_validated(tmp_path):
         with pytest.raises(ValueError) as e:
             load_label(write(tmp_path, mutated(change)))
         assert "quote_pattern" in str(e.value)
+
+
+@pytest.mark.parametrize("pattern", [None, "", " ", ".*", "^", "(?:price)?"])
+def test_main_info_requires_a_nonempty_offer_pattern(tmp_path, pattern):
+    data = mutated(lambda d: d["tasks"]["main_info"].update(quote_pattern=pattern))
+    with pytest.raises(ValueError, match="quote_pattern"):
+        load_label(write(tmp_path, data))
 
 
 def test_m8_label_file_name_must_match_the_site(tmp_path):

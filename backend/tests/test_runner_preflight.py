@@ -23,7 +23,7 @@ def site(host="demo.example.org", **over):
 
 def label_json(host):
     return json.dumps({"site": f"https://{host}", "tasks": {
-        "main_info": {"urls": [f"https://{host}/p"]},
+        "main_info": {"urls": [f"https://{host}/p"], "quote_pattern": "handmade shoes"},
         "contact_form": {"urls": [f"https://{host}/c"], "required_fields": ["email"]},
         "docs_api": {"none_exists": True}}})
 

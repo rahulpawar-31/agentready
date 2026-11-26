@@ -6,7 +6,7 @@ from tests.runner_fakes import ScriptedLLM, tool
 
 O = "https://x.test"
 PRICING = "<html><title>Pricing</title><p>Plans start at $19 per month. Cancel any time.</p></html>"
-MAIN = TaskLabel(urls=("x.test/pricing",))
+MAIN = TaskLabel(urls=("x.test/pricing",), quote_pattern=r"plans start at \$19")
 FORM = TaskLabel(urls=("x.test/contact",), required_fields=(("email",),))
 PAGES = {f"{O}/pricing": page(f"{O}/pricing", PRICING)}
 
