@@ -14,7 +14,7 @@ from tests.runner_fakes import ScriptedLLM, tool
 
 O = "https://x.test"
 LABEL = {"site": O, "tasks": {
-    "main_info": {"urls": [f"{O}/pricing"]},
+    "main_info": {"urls": [f"{O}/pricing"], "quote_pattern": r"plans start at \$19"},
     "contact_form": {"urls": [f"{O}/contact"], "required_fields": ["email"]},
     "docs_api": {"none_exists": True}}}
 CRITERIA = {"version": 1, "toolset_version": "1", "step_limit": 10, "max_turns": 24,
@@ -78,6 +78,22 @@ def test_three_repeats_make_nine_runs(tmp_path):
     ws, rec = workspace(tmp_path), Recorder(script=script_for_one_repeat() * 3)
     assert main(argv(ws, repeats="3"), rec.deps, lambda s: None, repo_root=ws) == 0
     assert len(load_runs(ws / "results", "before")) == 9
+
+
+def test_cli_saves_actual_guard_logs_and_counts_batch_verification_once(tmp_path):
+    from app.fetch import GuardedFetcher
+    ws, rec = workspace(tmp_path), Recorder()
+    make_fake = rec.deps.make_fetcher
+    rec.deps.make_fetcher = lambda host, snapshot: GuardedFetcher(
+        make_fake(host, snapshot), host, resolver=rec.deps.resolver, min_interval=0)
+    probe = [{"method": "GET", "url": O + "/", "address": "93.184.216.34",
+              "status": 200, "query_redacted": False}]
+    rec.deps.verification_log = lambda: probe
+    assert main(argv(ws), rec.deps, lambda s: None, repo_root=ws) == 0
+    runs = load_runs(ws / "results", "before")
+    assert sum(len(row["result"]["verification_request_log"]) for row in runs) == 1
+    assert sum(len(row["result"]["request_log"]) for row in runs) == 3
+    assert all(row["result"]["request_log"][0]["address"] == "93.184.216.34" for row in runs)
 
 
 def test_tasks_option_limits_the_run(tmp_path):
@@ -355,7 +371,7 @@ def test_the_committed_criteria_file_matches_the_code():
     data, sha = load_criteria(criteria)                       # raises if a constant or the harness hash differs
     assert data["harness_sha256"] == harness_sha256() and len(sha) == 64
     text = json.dumps(data["tasks"])
-    assert "quote_pattern" in text and "does not check that the quote states" in text    # the text says what the code checks
+    assert "quote_pattern" in text and "required" in text
 
 
 def test_snapshot_names_with_a_trailing_newline_or_the_reserved_name_audits_are_refused(tmp_path):
@@ -385,7 +401,8 @@ def test_the_audit_cli_also_refuses_cleanly_without_the_secret(tmp_path, monkeyp
         raise RuntimeError("Set AGENTREADY_SECRET (or AGENTREADY_DEV=1 for local development only)")
     monkeypatch.setattr(audit_cli, "default_deps", no_secret)
     label = tmp_path / "x.test.json"
-    label.write_text(json.dumps({**LABEL, "audit_checks": {c: True for c in __import__("app.runner.labels", fromlist=["x"]).AUDIT_CHECK_IDS}}))
+    label.write_text(json.dumps({**LABEL, "audit_checks": {"before": {
+        c: True for c in __import__("app.runner.labels", fromlist=["x"]).AUDIT_CHECK_IDS}}}))
     monkeypatch.setattr(audit_cli, "git_problems", lambda paths, repo_root: [])
     lines = []
     code = audit_cli.main(["--label", str(label), "--snapshot", "before", "--results", str(tmp_path / "r")],

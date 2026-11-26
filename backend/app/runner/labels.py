@@ -80,7 +80,7 @@ class TaskLabel:
     urls: tuple[str, ...] = ()
     none_exists: bool = False
     required_fields: tuple[tuple[str, ...], ...] = ()    # each field: a tuple of accepted names
-    quote_pattern: str = ""                               # main_info: the quote must match this regex
+    quote_pattern: str = ""                               # required for main_info: owner-labelled offer/pricing text
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,10 @@ class SiteLabel:
     site: str
     host: str
     tasks: dict
-    audit_checks: dict[str, bool] | None = None
+    audit_checks: dict[str, dict[str, bool]] | None = None
+
+    def audit_checks_for(self, snapshot: str) -> dict[str, bool] | None:
+        return self.audit_checks.get(snapshot) if self.audit_checks is not None else None
 
 
 def _urls(task_id: str, raw, origin: str) -> tuple[str, ...]:
@@ -129,9 +132,11 @@ def _pattern(task_id: str, raw) -> str:
     if not isinstance(raw, str) or len(raw) > MAX_PATTERN_CHARS:
         raise ValueError(f"{task_id}: quote_pattern must be a string of at most {MAX_PATTERN_CHARS} characters")
     try:
-        re.compile(raw)
+        pattern = re.compile(raw)
     except re.error:
         raise ValueError(f"{task_id}: quote_pattern is not a valid regular expression")
+    if not raw.strip() or pattern.search("") is not None:
+        raise ValueError(f"{task_id}: quote_pattern must identify offer or pricing text, not match empty text")
     return raw
 
 
@@ -156,6 +161,8 @@ def _task_label(task_id: str, raw, origin: str) -> TaskLabel:
         if "required_fields" not in raw:
             raise ValueError("contact_form: required_fields is required")
         fields = _fields(task_id, raw["required_fields"])
+    if task_id == "main_info" and not pattern:
+        raise ValueError("main_info: quote_pattern is required to identify the offer or pricing text")
     return TaskLabel(urls, none_exists, fields, pattern)
 
 
@@ -181,15 +188,20 @@ def load_label(path, check_name: bool = False) -> SiteLabel:
                          "(a port becomes an underscore: x.test_8443.json)")
     audit_checks = data.get("audit_checks")
     if audit_checks is not None:
-        if not isinstance(audit_checks, dict):
-            raise ValueError("audit_checks must be an object of expected pass/fail booleans")
-        unknown_checks = set(audit_checks) - set(AUDIT_CHECK_IDS)
-        missing_checks = set(AUDIT_CHECK_IDS) - set(audit_checks)
-        if unknown_checks:
-            raise ValueError(f"Unknown audit check(s): {', '.join(sorted(unknown_checks))}")
-        if missing_checks:
-            raise ValueError(f"Missing audit check label(s): {', '.join(sorted(missing_checks))}")
-        if any(not isinstance(value, bool) for value in audit_checks.values()):
-            raise ValueError("Every audit_checks value must be true (expected pass) or false (expected fail)")
+        if not isinstance(audit_checks, dict) or not audit_checks:
+            raise ValueError("audit_checks must map snapshot names to complete expected pass/fail maps")
+        for snapshot, expected in audit_checks.items():
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", snapshot) or snapshot.casefold() == "audits":
+                raise ValueError("audit_checks snapshot names must match [A-Za-z0-9_-]{1,64} and not be audits")
+            if not isinstance(expected, dict):
+                raise ValueError("audit_checks must have a separate check map for each snapshot; flat maps are not accepted")
+            unknown_checks = set(expected) - set(AUDIT_CHECK_IDS)
+            missing_checks = set(AUDIT_CHECK_IDS) - set(expected)
+            if unknown_checks:
+                raise ValueError(f"Unknown audit check(s): {', '.join(sorted(unknown_checks))}")
+            if missing_checks:
+                raise ValueError(f"Missing audit check label(s): {', '.join(sorted(missing_checks))}")
+            if any(not isinstance(value, bool) for value in expected.values()):
+                raise ValueError("Every audit_checks outcome must be true (expected pass) or false (expected fail)")
     return SiteLabel(ref.origin, ref.netloc, {t: _task_label(t, tasks[t], ref.origin) for t in TASK_IDS},
                      audit_checks)

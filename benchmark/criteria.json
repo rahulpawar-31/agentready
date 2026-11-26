@@ -1,13 +1,13 @@
 {
-  "version": 2,
+  "version": 3,
   "toolset_version": "1",
   "step_limit": 10,
   "max_turns": 24,
-  "harness_sha256": "5f7d41d670930859e771dfb70a65f61cc0a5725bcad3194f49839d283bd7fa5d",
+  "harness_sha256": "b2138f0eee980660869c4fd5ee0932c9c64e01d8f9d76ac779f0b15a05d3ae0a",
   "note": "Written before any benchmark run. The runner refuses to start unless this file and the site label are committed and unmodified (the file on disk must be byte for byte the blob in HEAD), refuses if harness_sha256 differs from the code's current harness hash (tools, prompts, task wording, limits), and records this file's SHA-256, the label's SHA-256 and the git commit with every run. Success is judged by code against the hand label, never by the model.",
   "tasks": {
     "main_info": {
-      "success": "The agent fetched a page on the verified host that matches a hand-labelled page (the tools returned it), and submitted a quote of at least 8 characters that appears in the text the agent was shown for that URL. If the label sets a quote_pattern, the quote must also match it. Without a quote_pattern this task measures whether the labelled page was found and read, and a quote copied from it; it does not check that the quote states the offer or the prices.",
+      "success": "The agent fetched a page on the verified host that matches a hand-labelled page (the tools returned it), and submitted a quote of at least 8 characters that appears in the text the agent was shown for that URL. The owner-labelled quote_pattern is required and must identify the offer or pricing; the quote must also match it. Labels without a pattern, or with a pattern that matches empty text, are rejected before any run.",
       "failure": "A page that is not labelled, no answer, no quote, a quote that is not in the text shown, a quote that does not match the label's quote_pattern, the step limit reached without an answer, or a block by a CAPTCHA or login."
     },
     "contact_form": {

@@ -17,7 +17,7 @@ from .fixes.models import FixKind, Proposal, Skipped
 from .fixes.propose import propose_fixes
 from .fixes.queue import FixQueue, InvalidTransition, NotApproved, UnknownFix, summary
 from .fixes.validate import validate_json_ld_snippet, validate_llms_txt, validate_mcp_stub
-from .fetch import CachedFetcher, GuardedFetcher, HttpxFetcher, default_resolver, is_public
+from .fetch import CachedFetcher, GuardedFetcher, HttpxFetcher, default_resolver, is_public, request_log_for
 from .mcp_server import install_mcp, mcp_lifespan
 from .models import Report
 from .ownership import default_txt_lookup, make_token, verify_ownership
@@ -116,16 +116,22 @@ def _parse(url: str) -> SiteRef:
 
 
 @app.get("/ownership-token")
-def ownership_token(domain: str):
-    return _instructions(_parse(f"https://{domain}"))
+def ownership_token(domain: str, resolver=Depends(get_resolver)):
+    ref = _parse(f"https://{domain}")
+    _require_public(ref, resolver)
+    return _instructions(ref)
+
+
+def _require_public(ref: SiteRef, resolver) -> None:
+    addrs = resolver(ref.hostname)
+    if not addrs or not all(is_public(a) for a in addrs):
+        raise HTTPException(422, "host does not resolve to a public address and cannot be audited")
 
 
 @app.post("/audit")
 def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(get_resolver)):
     ref = _parse(req.url)
-    addrs = resolver(ref.hostname)
-    if not addrs or not all(is_public(a) for a in addrs):
-        raise HTTPException(422, "host does not resolve to a public address and cannot be audited")
+    _require_public(ref, resolver)
     probe = build_probe_fetcher(ref.netloc, resolver=resolver)
     owner = verify_ownership(ref.netloc, make_token(ref.netloc, SECRET), probe, txt,
                              dns_name=ref.dns_name, allow_dns=ref.dns_allowed, scheme=ref.scheme)
@@ -134,6 +140,7 @@ def post_audit(req: AuditRequest, txt=Depends(get_txt_lookup), resolver=Depends(
     fetcher = build_audit_fetcher(ref.netloc, req.snapshot, resolver=resolver)   # the cache is created only now
     recorder = RecordingFetcher(fetcher)               # remembers the pages the audit reads; it makes no request itself
     report = audit(ref.origin, recorder)
+    report.verification_request_log = request_log_for(probe)
     try:
         baseline = Baseline.from_recorder(ref.origin, recorder)
     except Exception:                                  # noqa: BLE001 - the report must survive a baseline problem

@@ -1,26 +1,58 @@
 {
   "site": "https://your-site.example",
   "tasks": {
-    "main_info": { "urls": ["https://your-site.example/pricing"] },
-    "contact_form": {
-      "urls": ["https://your-site.example/contact"],
-      "required_fields": ["email", ["message", "your message"]]
+    "main_info": {
+      "urls": [
+        "https://your-site.example/pricing"
+      ],
+      "quote_pattern": "plans start at \\$19 per month"
     },
-    "docs_api": { "none_exists": true }
+    "contact_form": {
+      "urls": [
+        "https://your-site.example/contact"
+      ],
+      "required_fields": [
+        "email",
+        [
+          "message",
+          "your message"
+        ]
+      ]
+    },
+    "docs_api": {
+      "none_exists": true
+    }
   },
   "audit_checks": {
-    "robots_ai": true,
-    "sitemap": true,
-    "llms_txt": true,
-    "json_ld": true,
-    "no_js_content": true,
-    "labelled_forms": true,
-    "no_captcha": true,
-    "no_login_wall": true,
-    "openapi_public": true,
-    "auth_declared": true,
-    "env_not_exposed": true,
-    "git_not_exposed": true,
-    "security_headers": true
+    "before": {
+      "robots_ai": true,
+      "sitemap": true,
+      "llms_txt": false,
+      "json_ld": false,
+      "no_js_content": true,
+      "labelled_forms": true,
+      "no_captcha": true,
+      "no_login_wall": true,
+      "openapi_public": true,
+      "auth_declared": true,
+      "env_not_exposed": true,
+      "git_not_exposed": true,
+      "security_headers": true
+    },
+    "after": {
+      "robots_ai": true,
+      "sitemap": true,
+      "llms_txt": true,
+      "json_ld": true,
+      "no_js_content": true,
+      "labelled_forms": true,
+      "no_captcha": true,
+      "no_login_wall": true,
+      "openapi_public": true,
+      "auth_declared": true,
+      "env_not_exposed": true,
+      "git_not_exposed": true,
+      "security_headers": true
+    }
   }
 }

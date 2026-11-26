@@ -1,6 +1,7 @@
 import re
 from dataclasses import asdict, dataclass, field
 
+from ..fetch import request_log_for
 from .judge import judge
 from .labels import TaskLabel
 from .llm import LLMClient
@@ -27,6 +28,8 @@ class RunResult:
     error: str = ""                                    # for an invalid run: "ExceptionType: message", clipped
     stop_reason: str = ""                              # the last model turn's stop reason
     model: str = ""                                    # the model that actually answered
+    request_log: list | None = None
+    verification_request_log: list | None = None
 
 
 ERROR_CLIP = 300
@@ -99,4 +102,5 @@ def run_task(*, task: Task, label: TaskLabel, origin: str, fetcher, llm: LLMClie
         success, reason = False, invalid
     return RunResult(task.id, success, reason, invalid is None, asdict(box.answer) if box.answer else None,
                      box.steps, turns, list(box.fetched), box.offsite, box.blocked, in_tok, out_tok,
-                     box.network_errors, list(box.fetch_errors), error, stop_reason, model)
+                     box.network_errors, list(box.fetch_errors), error, stop_reason, model,
+                     request_log=request_log_for(fetcher))

@@ -9,7 +9,7 @@ from app.models import Category, Confidence, Finding, Page, Report, Status
 
 
 TASKS = {
-    "main_info": {"urls": ["https://x.test/pricing"]},
+    "main_info": {"urls": ["https://x.test/pricing"], "quote_pattern": r"plans start at \$19"},
     "contact_form": {"urls": ["https://x.test/contact"], "required_fields": ["email"]},
     "docs_api": {"none_exists": True},
 }
@@ -22,7 +22,7 @@ def make_label(labels_dir, audit_checks=AUDIT_EXPECTED):
     path = labels_dir / "x.test.json"
     value = {"site": "https://x.test", "tasks": TASKS}
     if audit_checks is not None:
-        value["audit_checks"] = audit_checks
+        value["audit_checks"] = {"before": dict(audit_checks), "after": dict(audit_checks)}
     path.write_text(json.dumps(value))
     return path
 
@@ -74,6 +74,32 @@ def test_report_computes_per_check_accuracy_and_excludes_unreachable(tmp_path):
     markdown = to_markdown(report)
     assert "False-positive rate" in markdown and "robots_ai" in markdown
     assert "Unreachable" in markdown
+
+
+def test_accuracy_uses_the_independently_preregistered_outcome_for_each_snapshot(tmp_path):
+    label = make_label(tmp_path / "labels")
+    data = json.loads(label.read_text())
+    data["audit_checks"]["before"]["llms_txt"] = False
+    data["audit_checks"]["after"]["llms_txt"] = True
+    label.write_text(json.dumps(data))
+    results = tmp_path / "results"
+    for snapshot, passed in (("before", False), ("after", True)):
+        write_audit(results, snapshot, label, findings=[{
+            "check_id": "llms_txt", "passed": passed, "status": "detected" if passed else "not detected"}])
+    report = build_report(results, tmp_path / "labels", "before", "after")
+    for snapshot in ("before", "after"):
+        measured = report["audit_check_accuracy"][snapshot]["checks"]["llms_txt"]
+        assert measured["agreement_pct"] == 100.0
+        assert measured["false_positive"] == measured["false_negative"] == 0
+
+
+def test_audit_cli_refuses_an_unlabelled_snapshot_without_network(tmp_path):
+    label = make_label(tmp_path / "labels")
+    calls, output = [], []
+    code = audit_main(["--label", str(label), "--snapshot", "unregistered", "--results", str(tmp_path / "results")],
+                      deps=_fake_audit_deps(calls), out=output.append, repo_root=tmp_path)
+    assert code == 2 and calls == []
+    assert "this snapshot" in output[0]
 
 
 def test_missing_reports_and_missing_findings_are_explicit(tmp_path):
@@ -150,19 +176,24 @@ def test_audit_cli_requires_preregistered_labels_before_verification(tmp_path):
 
 
 def test_audit_cli_verifies_control_then_saves_one_guarded_snapshot(tmp_path, monkeypatch):
+    from app.fetch import CachedFetcher, GuardedFetcher
     labels_dir = tmp_path / "benchmark" / "labels"
     label = make_label(labels_dir)
     calls = []
 
     class FakeFetcher:
-        def get(self, url, *, rendered=False):
+        def get(self, url, *, rendered=False, address=None):
             calls.append(url)
             return Page(url, 404, {}, "")
 
     class Deps:
         verify = staticmethod(lambda ref: calls.append(("verify", ref.netloc)) or True)
         resolver = staticmethod(lambda host: calls.append(("resolve", host)) or ["93.184.216.34"])
-        make_fetcher = staticmethod(lambda host, snapshot: calls.append(("fetcher", host, snapshot)) or FakeFetcher())
+        make_fetcher = staticmethod(lambda host, snapshot: calls.append(("fetcher", host, snapshot)) or
+                                    CachedFetcher(GuardedFetcher(FakeFetcher(), host,
+                                                   resolver=lambda h: ["93.184.216.34"], min_interval=0),
+                                                   tmp_path / "cache"))
+        verification_log = staticmethod(lambda: [])  # DNS verification sends no HTTP request
 
     monkeypatch.setattr(audit_cli, "git_problems", lambda paths, repo_root: [])
     output = []
@@ -173,8 +204,12 @@ def test_audit_cli_verifies_control_then_saves_one_guarded_snapshot(tmp_path, mo
     saved = json.loads(report_path(results, "before", "x.test").read_text())
     assert saved["site"] == "x.test" and saved["origin"] == "https://x.test"
     assert len(saved["findings"]) == len(AUDIT_CHECK_IDS)
+    assert len(saved["request_log"]) == 9 and saved["verification_request_log"] == []
     assert calls[0] == ("resolve", "x.test") and calls[1] == ("verify", "x.test")
     assert all(url.startswith("https://x.test/") for url in calls if isinstance(url, str))
+    report = build_report(results, labels_dir, "before", "after")
+    boundary = report["audit_check_accuracy"]["before"]["boundary_integrity"]
+    assert boundary["status"] == "verified" and boundary["outbound_requests"] == 9
 
 
 

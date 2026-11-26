@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from .checks import discoverability, identity, operability, safety
 from .checks.base import Site
-from .fetch import Fetcher
+from .fetch import Fetcher, request_log_for
 from .models import Report, Status
 from .scoring import category_scores, is_scored, score
 
@@ -85,4 +85,4 @@ def audit(url: str, fetcher: Fetcher) -> Report:
     findings = [f for check in CHECKS for f in check(site)]
     unscored = sum(1 for f in findings if f.status is Status.UNREACHABLE)
     return Report(site.base, score(findings), category_scores(findings), findings, unscored,
-                  "scored" if is_scored(findings) else "not_scored")
+                  "scored" if is_scored(findings) else "not_scored", request_log=request_log_for(fetcher))

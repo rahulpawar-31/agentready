@@ -86,7 +86,7 @@ python -m app.runner.report --before before --after after --output ../benchmark/
 
 ## Audit-check accuracy
 
-Before an audit run, independently label all 13 expected check outcomes in the site's committed label file under `audit_checks` (`true` means the check should pass; `false` means it should fail). Then record each owner-verified snapshot:
+Before the first run, independently label all 13 expected check outcomes for each planned snapshot in the site's committed label file under `audit_checks.before` and `audit_checks.after` (`true` means the check should pass; `false` means it should fail). Outcomes can differ where planned fixes change a check; both maps must be committed before collection. Then record each owner-verified snapshot:
 
 ```bash
 cd backend
@@ -103,7 +103,7 @@ The report shows per-check agreement and false-positive rates. A failed readines
 - A host that resolves to a private, loopback, link-local or reserved address cannot be audited, so use a public staging host.
 - Reports and fix queues are kept in memory in one process and are lost on restart. There are no accounts: the report id is the only credential for approving and exporting, so treat it like a secret.
 - Text hidden with CSS (`display:none`, off-screen) is shown to the model like any other text, because the runner reads the static HTML and does not render it.
-- A quote check proves the quote is in the text the agent was shown, not that it states the offer: set a `quote_pattern` in the label when that matters.
+- Main-info labels require a `quote_pattern` that identifies the offer or pricing. The quote must appear in the text shown and match that pattern; the owner must choose a meaningful pattern.
 - The OpenAPI-to-MCP stub is validated but not counted in task success.
 
 ## Project layout

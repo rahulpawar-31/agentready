@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 
+from ..fetch import REQUEST_LOG_VERSION
 from . import judge, llm, tasks, tools
 from .agent import RunResult
 
@@ -34,6 +35,8 @@ def harness_sha256() -> str:
             "TEXT_CLIP", "JSONLD_CLIP", "LINK_LIMIT", "FORM_LIMIT", "FIELD_LIMIT", "JSONLD_LIMIT", "URL_CLIP",
             "KIND_CLIP", "RESULT_CAP", "ANSWER_CLIP", "ANSWER_FIELD_LIMIT")},
         "min_quote_chars": judge.MIN_QUOTE_CHARS,
+        "judge_version": judge.JUDGE_VERSION,
+        "request_log_version": REQUEST_LOG_VERSION,
         "step_limit": tasks.STEP_LIMIT,
         "max_turns": tasks.MAX_TURNS,
         "max_tokens": llm.MAX_TOKENS,

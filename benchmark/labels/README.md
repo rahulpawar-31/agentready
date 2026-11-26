@@ -8,9 +8,10 @@ Format:
 - `site`: the site's origin, for example `https://example.com`.
 - `tasks`: an object with all three tasks.
   - `main_info`: `urls`, the hand-labelled page(s) that state what the site offers or what it costs, and an
-    optional `quote_pattern` (a regular expression, at most 200 characters, matched case-insensitively). Without
-    it the task only checks that the labelled page was fetched and that the quote is on it, so boilerplate such
-    as a copyright line would pass: set a pattern such as `"\\$\\d+"` when the page states prices.
+    required `quote_pattern` (a regular expression, at most 200 characters, matched case-insensitively).
+    Choose a pattern that identifies the actual offer or pricing, for example `"plans start at \\$19"`.
+    Missing patterns and patterns that match empty text are rejected. The judge also requires the quote to
+    appear in the page text shown to the agent. Pattern quality still depends on the owner's independent label.
   - `contact_form`: `urls`, the page(s) with the contact form, and `required_fields`. Each required field is a
     name or a list of accepted names (case and punctuation are ignored when comparing, and a name needs at least
     one letter or digit). The agent sees the form's real `name`, `id` and label text, so list every one of those as
@@ -24,11 +25,11 @@ Format:
 - The file name must be the site's host, for example `example.com.json` (a port becomes an underscore:
   `example.com_8443.json`).
 - Every page the agent names must be a page it actually fetched, so a label cannot be passed by guessing a URL.
-- `audit_checks` is required before audit-accuracy benchmarking. It maps every check ID to a boolean: `true` means a human's preregistered expected outcome is that the check passes; `false` means it should fail. Label the site independently by inspecting its pages and headers before running AgentReady. Do not copy the illustrative booleans from `EXAMPLE.json.example` as real labels. Keep a short rationale or supporting URL in your label notes outside this machine-readable map.
+- `audit_checks` is required before audit-accuracy benchmarking. It maps each snapshot name to all 13 expected check outcomes: `"audit_checks": {"before": {"llms_txt": false, ...}, "after": {"llms_txt": true, ...}}`. Each check value is a boolean: `true` means it should pass; `false` means it should fail. Flat maps are rejected. Use the exact snapshot names you will run; names follow `[A-Za-z0-9_-]{1,64}` and cannot be `audits`. Independently label the baseline and the expected deployed state, and commit **both maps before the first run**. The after expectations can differ where planned fixes change a check. Do not edit labels after collection to match observed results. Do not copy the illustrative booleans from `EXAMPLE.json.example` as real labels. Keep a short rationale or supporting URL in label notes outside these maps.
 
 Copy `EXAMPLE.json.example` to `<site>.json` and fill it in by hand after looking at the site yourself.
 
-The audit runner refuses to fetch pages until the label file, including all 13 `audit_checks` booleans, is committed and unchanged. Run an audit snapshot with:
+The audit runner refuses to fetch pages until the label file, including all 13 `audit_checks` booleans for the requested snapshot, is committed and unchanged. Run an audit snapshot with:
 
 ```bash
 cd backend

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..audit import SiteRef, parse_url
-from ..fetch import is_public
+from ..fetch import is_public, request_log_for
 from .agent import run_task
 from .labels import load_label
 from .llm import DEFAULT_MODEL, LLMClient, make_client
@@ -34,6 +34,7 @@ class Deps:
     committed: Callable[[list], list]                # paths -> problems
     model: str
     git_head: Callable[[], str] = lambda: ""         # the commit the criteria and label were checked against
+    verification_log: Callable[[], list | None] = lambda: None
 
 
 GIT_MISSING = "git could not be run (is git installed and on PATH?)"
@@ -112,17 +113,21 @@ def default_deps() -> Deps:
     from .. import main as api                      # raises unless AGENTREADY_SECRET (or AGENTREADY_DEV=1) is set
     from ..fetch import default_resolver
     from ..ownership import default_txt_lookup, make_token, verify_ownership
+    verification_requests = None
 
     def verify(ref: SiteRef) -> bool:
+        nonlocal verification_requests
         probe = api.build_probe_fetcher(ref.netloc, resolver=default_resolver)
         owner = verify_ownership(ref.netloc, make_token(ref.netloc, api.SECRET), probe, default_txt_lookup,
                                  dns_name=ref.dns_name, allow_dns=ref.dns_allowed, scheme=ref.scheme)
+        verification_requests = request_log_for(probe)
         return owner.verified
 
     return Deps(verify=verify, resolver=default_resolver,
                 make_fetcher=lambda netloc, snapshot: api.build_audit_fetcher(netloc, snapshot),
                 make_llm=make_client, committed=git_problems, git_head=git_head,
-                model=os.environ.get("AGENTREADY_MODEL", DEFAULT_MODEL))
+                model=os.environ.get("AGENTREADY_MODEL", DEFAULT_MODEL),
+                verification_log=lambda: verification_requests)
 
 
 def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
@@ -190,7 +195,7 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
     head = deps.git_head()
     prereg = not args.allow_uncommitted
     invalid = 0
-    for rep, task_id in todo:
+    for index, (rep, task_id) in enumerate(todo):
         existing = run_path(args.results, args.snapshot, ref.netloc, task_id, rep)
         if existing.exists():                                       # an invalid or unreadable earlier run
             out(f"Moved the invalid result aside: {move_aside(existing).name}")
@@ -198,6 +203,8 @@ def main(argv, deps: Deps | None = None, out=print, repo_root=REPO_ROOT) -> int:
         config = config_dict(model=deps.model, snapshot=args.snapshot, criteria_sha256=sha, label_sha256=label_sha,
                              git_head=head, preregistered=prereg, **guard_settings(fetcher))
         run = run_task(task=TASKS[task_id], label=label.tasks[task_id], origin=ref.origin, fetcher=fetcher, llm=llm)
+        # Verification happened once for this batch. Record its requests once, including on an invalid first run.
+        run.verification_request_log = deps.verification_log() if index == 0 else []
         save_run(args.results, args.snapshot, ref.netloc, rep, run, config)
         invalid += 0 if run.valid else 1
         out(f"{ref.netloc} {task_id} #{rep}: {'pass' if run.success else 'FAIL'} ({run.reason}), "

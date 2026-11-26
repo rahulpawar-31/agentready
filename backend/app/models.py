@@ -51,3 +51,5 @@ class Report:
     findings: list
     unscored: int        # findings excluded from the score because the page was unreachable
     score_status: str = "scored"     # "not_scored" when nothing could be scored (then score is 0)
+    request_log: list | None = None
+    verification_request_log: list | None = None

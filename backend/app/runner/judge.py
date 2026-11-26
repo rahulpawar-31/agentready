@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 from .labels import TaskLabel, alias_key, fetch_key, host_key, normalise_url
 
 MIN_QUOTE_CHARS = 8
+JUDGE_VERSION = "2"       # required offer/pricing labels; included in the preregistered harness hash
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,8 @@ def judge(task_id: str, answer: Answer | None, label: TaskLabel, origin: str, se
     if fetched_key not in visited:
         return Verdict(False, "not_visited")
     if task_id == "main_info":
+        if not label.quote_pattern:
+            return Verdict(False, "missing_quote_pattern")
         quote = _squash(answer.quote)
         if len(quote.replace(" ", "")) < MIN_QUOTE_CHARS:
             return Verdict(False, "no_quote")

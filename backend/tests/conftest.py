@@ -30,9 +30,10 @@ class FakeFetcher:
 
 @pytest.fixture(autouse=True)
 def _clear_api_overrides():
-    """Dependency overrides are global state on the FastAPI app: never leak them between tests."""
-    yield
+    """Use synthetic DNS by default; a test may override it. Never leak API dependencies between tests."""
     from app import main
+    main.app.dependency_overrides[main.get_resolver] = lambda: public_resolver
+    yield
     main.app.dependency_overrides.clear()
 
 

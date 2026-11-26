@@ -22,7 +22,7 @@ def write_label(labels: Path, host: str) -> Path:
     path.write_text(json.dumps({
         "site": f"https://{host}",
         "tasks": {
-            "main_info": {"urls": [f"https://{host}/p"]},
+            "main_info": {"urls": [f"https://{host}/p"], "quote_pattern": "handmade shoes"},
             "contact_form": {"urls": [f"https://{host}/c"], "required_fields": ["email"]},
             "docs_api": {"none_exists": True},
         }}))
@@ -92,6 +92,49 @@ def extra(env, *more):
 def build(env, before="before", after="after", repeats=3):
     labels, results = env
     return rep.build_report(results, labels, before, after, repeats, criteria_path=criteria_of(env))
+
+
+def test_boundary_summary_counts_redirects_and_invalid_attempts(env):
+    _, results = env
+    for repeat, valid in ((1, True), (2, False)):
+        path = put(results, "before", "a.test", "main_info", repeat, True, valid=valid)
+        row = json.loads(path.read_text())
+        row["result"]["verification_request_log"] = []
+        row["result"]["request_log"] = [
+            {"method": "GET", "url": "https://a.test/old", "address": "93.184.216.34",
+             "status": 302, "query_redacted": False},
+            {"method": "GET", "url": "https://a.test/new", "address": "93.184.216.34",
+             "status": 200, "query_redacted": False}]
+        path.write_text(json.dumps(row))
+    report = build(env)
+    summary = report["before"]["boundary_integrity"]
+    assert summary == {"status": "verified", "records": 2, "outbound_requests": 4,
+                       "missing_logs": 0, "off_host_requests": 0, "invalid_entries": 0}
+    assert "recorded HTTP requests: 4" in rep.to_markdown(report)
+
+
+@pytest.mark.parametrize("change", [
+    {"url": "https://evil.test/"}, {"address": "127.0.0.1"}, {"method": "POST"},
+    {"url": "https://a.test/?token=private-value"}, {"status": "200"}])
+def test_boundary_violations_are_data_issues_without_echoing_request_secrets(env, change):
+    _, results = env
+    path = put(results, "before", "a.test", "main_info", 1, True)
+    row = json.loads(path.read_text())
+    entry = {"method": "GET", "url": "https://a.test/", "address": "93.184.216.34",
+             "status": 200, "query_redacted": False, **change}
+    row["result"].update(request_log=[entry], verification_request_log=[])
+    path.write_text(json.dumps(row))
+    report = build(env)
+    assert report["before"]["boundary_integrity"]["status"] == "violated"
+    assert any("request log violates" in issue for issue in report["problems"])
+    assert "private-value" not in rep.to_markdown(report)
+
+
+def test_missing_request_logs_are_unmeasured_not_zero_request_proof(env):
+    assert build(env)["before"]["boundary_integrity"]["status"] == "not measured"
+    put(env[1], "before", "a.test", "main_info", 1, True)
+    summary = build(env)["before"]["boundary_integrity"]
+    assert summary["status"] == "incomplete" and summary["missing_logs"] == 2
 
 
 def snapshot_tree(root: Path) -> dict:
