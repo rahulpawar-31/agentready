@@ -54,7 +54,7 @@ Sites on a non-default port can only be verified with the meta tag (inside `<hea
 
 **MCP.** The same server exposes `audit_site`, `get_report` and `propose_fixes` at `http://localhost:8000/mcp`. The official MCP Python client covers tool calls over real HTTP. The Claude Code connection health check passed; model-driven Claude Code tool calls have not been tested. See [docs/mcp.md](docs/mcp.md).
 
-The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui/*.test.mjs`. The UI flow and layouts were also checked in headless Chrome against a synthetic site. Firefox, Safari and a real-site browser run remain: see [docs/ui.md](docs/ui.md).
+The page's unit tests need Node 20 or newer: `cd backend && node --test tests/ui/*.test.mjs`. The UI flow and layouts were also checked in headless Chrome and Firefox against a synthetic site. Safari and a real-site browser run remain: see [docs/ui.md](docs/ui.md).
 
 ## Running the benchmark
 
@@ -108,6 +108,10 @@ The report shows per-check agreement and false-positive rates. A failed readines
 
 ## Project layout
 
+The backend uses FastAPI, Uvicorn, httpx, Beautiful Soup, dnspython and the official MCP Python SDK. The runner uses
+Gemini's REST API or the optional Anthropic SDK. The interface uses plain HTML, CSS and JavaScript; tests use pytest
+and Node's test runner. Implementation and review used Claude Code and Codex.
+
 ```
 backend/app/          the API (fetch guard, ownership, checks, scoring, audit)
 backend/app/fixes/    fix generation, validation, diffs, approval queue
@@ -127,4 +131,4 @@ docs/                 documentation and the plans
 - [docs/mcp.md](docs/mcp.md): the MCP server, its tools and its safety limits.
 - [docs/ui.md](docs/ui.md): the web page, its security rules and a manual checklist.
 - [docs/demo-script.md](docs/demo-script.md): the 3-minute demo script.
-- [docs/submission-checklist.md](docs/submission-checklist.md): what only the owner can do before submitting.
+- [docs/submission-checklist.md](docs/submission-checklist.md): completed release checks and remaining submission work.

@@ -25,11 +25,12 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 
 - [x] `cd backend && pytest` passes: 1,298 passed, 3 live tests skipped on 26 Nov 2026; the Gemini live test passed separately.
 - [x] `cd backend && node --test tests/ui/*.test.mjs` passes: 123 passed on 26 Nov 2026 (needs Node 20 or newer).
-- [ ] `python scripts/verify_checkout.py --ref <your pushed branch or commit>` passes on a fresh clone.
+- [x] `python scripts/verify_checkout.py --ref <your pushed branch or commit>` passes on a fresh clone: revision `c027a73` passed clone, isolated installation, Python/UI tests, five server smoke checks and clean-tree checks on 26 Nov 2026. Repeat for the final submission revision.
 - [ ] `python -m app.runner.report --before before --after after` runs with no "Data issues".
 - [ ] The README says "Not yet measured" only until the report exists; then link or copy the real report, with its sample-size line.
 - [x] Run the UI flow in Chrome with synthetic site responses: ownership, findings, proposals, approval, download, copy, revoke, reload and fresh re-audit passed on 26 Nov 2026. Light/dark layouts at 360 px and 1440 px, forced-colours emulation and print output were checked.
-- [ ] Finish the real-site, Firefox, Safari and native Windows high-contrast checks in [ui.md](ui.md).
+- [x] Run the same main flow in Firefox: ownership, findings, approval, actual download, copy, revocation, reload and fresh re-audit passed on 26 Nov 2026. Default-colour and dark layouts at 360 px and 1440 px fit without page overflow; PDF printing included every evidence section and omitted action-button labels.
+- [ ] Finish the real-site, Safari and native Windows high-contrast checks in [ui.md](ui.md). Safari WebDriver is blocked until "Allow remote automation" is enabled in Safari Settings.
 - [x] Connect an MCP client once: Claude Code 2.1.332 added a temporary local MCP configuration and its health check reported Connected on 26 Nov 2026. See [mcp.md](mcp.md).
 - [ ] Optional: exercise model-driven tools through Claude Code after signing in; only its connection health check has been confirmed.
 

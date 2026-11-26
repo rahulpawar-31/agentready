@@ -4,8 +4,8 @@ One page, served by the same app as the API. It follows the flow in the PRD (FR-
 control, see the score and the evidence, review the proposed fixes as diffs, approve, then download or copy the file
 yourself.
 
-**The flow and visual layout were checked in headless Chrome on 26 Nov 2026**, using the real application and a synthetic
-site supplied through the fetcher's mock transport. Firefox, Safari and a real-site browser run remain. The unit tests use a small
+**The flow and visual layout were checked in headless Chrome and Firefox on 26 Nov 2026**, using the real application and a synthetic
+site supplied through the fetcher's mock transport. Safari and a real-site browser run remain. The unit tests use a small
 fake DOM, and the real page modules were driven from Node against a real running server (see "What was tested"). The
 first time you open it in a browser, please look at the list at the end of this page.
 
@@ -111,7 +111,7 @@ with a message when Node is not installed).
   on, because the cards are drawn again. With many fixes you may have to scroll back to your card. (Kept as is.)
 - Downloading uses a temporary link to a browser-made file (`blob:` URL), which is released 30 seconds after the click
   (releasing it at once cancels the download in some browsers). A real Chrome download matched the approved export's
-  bytes; Firefox and Safari downloads remain to be checked.
+  bytes, as did a real Firefox download; Safari downloads remain to be checked.
 - **Copy** writes to the clipboard after the file was fetched from the server. Safari may refuse a clipboard write that
   does not happen directly inside the click; the page then says "Copy is not available in this browser. Use Download
   instead." The same sentence appears if the clipboard has not answered after 10 seconds. (Documented, not worked around.)
@@ -149,11 +149,18 @@ with a message when Node is not installed).
   were inspected at 360 px and 1440 px in light and dark mode; neither layout overflowed the page. Forced colours were
   emulated, and a PDF print check expanded evidence and hid actions. No page errors or failed requests were observed.
   This is UI verification with synthetic data, not a real-site benchmark.
+- **Firefox browser run (26 Nov 2026):** a temporary Firefox 161 build exercised ownership, audit findings, proposals,
+  approval, a real download matching the export, clipboard copy, revocation, reload and fresh re-audit against the same
+  synthetic site. Default-colour and dark layouts at 360 px and 1440 px fit without page overflow; default-colour
+  screenshots were inspected. A native PDF print contained all 13 evidence sections and no action-button labels;
+  no page errors occurred in the main flow. Safari 26.2 WebDriver was attempted but refused
+  a session because Safari's "Allow remote automation" setting is disabled; no Safari UI checks were completed.
 
 ## Remaining manual and cross-browser checks
 
-The Chrome run above covers the main flow, layouts, download, clipboard, reload and print behavior. Repeat the checks
-below on a real site and in Firefox and Safari; native Windows high-contrast behavior also remains unverified.
+The browser runs above cover the main flow, responsive layouts, download, clipboard, reload, light/dark themes and
+printing. Repeat on a real site and in Safari.
+Native Windows high-contrast behavior also remains unverified.
 
 1. The page loads with no console errors and nothing is blocked by the security policy. There should be no request for
    `/favicon.ico`.
