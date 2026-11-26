@@ -39,8 +39,8 @@ class SiteRef:
 
     @property
     def dns_allowed(self) -> bool:
-        """DNS TXT proves control of a name, not of a service on a port: default ports only."""
-        return (not self.is_ip) and self.port in (None, 80, 443)
+        """DNS TXT proves control of a name: only the requested scheme's default port qualifies."""
+        return (not self.is_ip) and self.port in (None, {"http": 80, "https": 443}[self.scheme])
 
 
 def parse_url(url: str) -> SiteRef:

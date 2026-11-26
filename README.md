@@ -50,7 +50,7 @@ uvicorn app.main:app --port 8000
 
 Open `http://127.0.0.1:8000/`: paste a URL, prove control, read the score, review the fixes as diffs, approve. The server listens on 127.0.0.1 only. For local development only, `AGENTREADY_DEV=1` uses a fixed development secret (the tests set it). `AGENTREADY_CACHE` sets the cache directory (default `.cache`).
 
-Sites on a non-default port can only be verified with the meta tag (inside `<head>` on the home page), because a DNS TXT record proves control of a name, not of a service on a port.
+Sites on a non-default port for their URL scheme can only be verified with the meta tag (inside `<head>` on the home page), because a DNS TXT record proves control of a name, not of a service on a port. DNS verification accepts HTTP port 80 and HTTPS port 443; `http://host:443` and `https://host:80` need the meta tag.
 
 **MCP.** The same server exposes `audit_site`, `get_report` and `propose_fixes` at `http://localhost:8000/mcp`. The official MCP Python client covers tool calls over real HTTP. The Claude Code connection health check passed; model-driven Claude Code tool calls have not been tested. See [docs/mcp.md](docs/mcp.md).
 

@@ -122,6 +122,31 @@ def test_dns_proof_counts_for_a_default_port_but_not_for_a_port(monkeypatch):
     assert c.post("/audit", json={"url": "https://example.com:8443/"}).status_code == 403
 
 
+@pytest.mark.parametrize("scheme,port,expected", [
+    ("http", 80, 200), ("https", 443, 200), ("http", 443, 403), ("https", 80, 403),
+])
+def test_dns_proof_requires_the_default_port_for_the_requested_scheme(monkeypatch, scheme, port, expected):
+    host = f"example.com:{port}"
+    origin = f"{scheme}://{host}"
+    token = main.make_token(host, main.SECRET)
+    lookups = []
+
+    def txt(name):
+        lookups.append(name)
+        return [f"agentready-verify={token}"]
+
+    c, fake = client(monkeypatch, {}, txt=txt)
+    response = c.post("/audit", json={"url": origin})
+
+    assert response.status_code == expected
+    if expected == 403:
+        assert lookups == []
+        assert fake.calls == [(f"{origin}/", False)]
+        assert response.json()["detail"]["dns_txt_name"] is None
+    else:
+        assert lookups == ["_agentready.example.com"]
+
+
 def test_dns_verification_makes_no_probe_request(monkeypatch):
     token = main.make_token("example.com", main.SECRET)
     probe, audit_f = FakeFetcher({}), FakeFetcher({})
