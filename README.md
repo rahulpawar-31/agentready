@@ -9,7 +9,7 @@ The wording, transcribed from the Homingo problem statement on 21 Nov 2026:
 > "We want the tools that make agents first-class users: interfaces, identity, permissions, payments, memory, sandboxes and testing built for agents rather than people."
 
 Re-check the quotation against the live page before submission, and remove it (do not reword it) if it differs.
-It matched the [official problem page](https://hackathon.homingo.co.in/problem-statements) rendered in Chrome on 26 Nov 2026.
+It matched the [official problem page](https://hackathon.homingo.co.in/problem-statements) rendered in Chrome on 26 Nov 2026; the latest check and merged-commit validation are recorded in [release evidence](docs/release-evidence.json).
 
 AgentReady is our interpretation of A1. It covers interfaces, identity, permissions and testing; it does not address payments, memory or sandboxes.
 
