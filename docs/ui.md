@@ -155,11 +155,16 @@ with a message when Node is not installed).
   screenshots were inspected. A native PDF print contained all 13 evidence sections and no action-button labels;
   no page errors occurred in the main flow. Safari 26.2 WebDriver was attempted but refused
   a session because Safari's "Allow remote automation" setting is disabled; no Safari UI checks were completed.
+- **Real-site browser run (26 Nov 2026):** Chrome exercised ownership verification, audit findings and proposals against
+  `https://personal-ai-blue.vercel.app` using the real guarded public-network fetcher, with no mocked responses. All 13
+  findings and the JSON-LD proposal rendered at desktop and mobile widths without page errors. No readiness fix was
+  approved or deployed during this check; the before/after task benchmark still needs valid site labels.
 
 ## Remaining manual and cross-browser checks
 
-The browser runs above cover the main flow, responsive layouts, download, clipboard, reload, light/dark themes and
-printing. Repeat on a real site and in Safari.
+The synthetic-site browser runs above cover the main flow, responsive layouts, download, clipboard, reload, light/dark
+themes and printing. The live-site run covers verification, audit and proposals. Real-site approval, export, deployment
+and fresh re-audit remain, along with Safari.
 Native Windows high-contrast behavior also remains unverified.
 
 1. The page loads with no console errors and nothing is blocked by the security policy. There should be no request for

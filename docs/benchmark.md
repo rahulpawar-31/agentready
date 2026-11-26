@@ -63,7 +63,8 @@ Gemini API key" below). Without `AGENTREADY_SECRET` the commands stop with
 one sentence naming it (exit code 2) and make no request. Snapshot names must match `[A-Za-z0-9_-]{1,64}`, and
 `audits` is reserved (the audit reports live in `benchmark/results/audits/`).
 
-1. **Register the site** in `benchmark/sites.json` (see `benchmark/sites.example.json`). The file starts empty.
+1. **Register the site** in `benchmark/sites.json` (see `benchmark/sites.example.json`). Dayhand is registered as the first
+   verified candidate; its task label is pending confirmation of suitable public pages.
 2. **Write the label** by hand after looking at the site yourself: `benchmark/labels/<host>.json`, format in
    `benchmark/labels/README.md`. Commit the label. It must be committed before any run.
 3. **Prove control**: start the API, then add the meta tag (inside `<head>` on the home page) or the DNS TXT record that

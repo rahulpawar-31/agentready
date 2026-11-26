@@ -6,9 +6,10 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 ## Benchmark and submission
 
 - [x] Provide `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` with `AGENTREADY_MODEL=gemini-3.5-flash-lite` (see docs/benchmark.md), in your own environment (never commit it) and install the runner extra: `pip install -e '.[runner]'`. Gemini access passed the live integration check on 26 Nov 2026; the Anthropic SDK is also installed.
-- [ ] Choose the benchmark sites (start with five) and verify control of each: the meta tag or the DNS TXT record from `GET /ownership-token?domain=<host>`.
-- [ ] For any site you do not own, get **written permission** and record where it is kept in `permission_note` in `benchmark/sites.json`. An after run also needs permission to change or deploy.
-- [ ] For CountryStateCity or MakeMySiteLive, get the employer's written OK first, or leave them out.
+- [x] Register and verify the first candidate, [Dayhand](https://personal-ai-blue.vercel.app): the ownership-only tag was deployed through [Personal-AI PR #435](https://github.com/rahulpawar-31/Personal-AI/pull/435) and real meta verification passed on 26 Nov 2026.
+- [ ] Confirm suitable public task pages and expand toward the target five sites. Dayhand currently exposes a client-rendered sign-in page, with no public contact form or documentation found during inspection. Its task label is pending; a login form must not be labelled as a contact form.
+- [x] Keep the current registry to the team-controlled site. For any site you do not own, get **written permission** and record where it is kept in `permission_note` in `benchmark/sites.json`. An after run also needs permission to change or deploy.
+- [x] Leave CountryStateCity and MakeMySiteLive out of the current registry; get the employer's written OK before adding either.
 - [ ] Ask in the Homingo Discord whether pre-existing work is allowed.
 - [ ] Write each site's label by hand and commit it (`benchmark/labels/<host>.json`), then commit `benchmark/criteria.json` if it changed. Do this before any run.
 - [ ] Register the sites in `benchmark/sites.json` and run `python -m app.runner.preflight --check-control` until nothing is blocked.
@@ -30,7 +31,8 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 - [ ] The README says "Not yet measured" only until the report exists; then link or copy the real report, with its sample-size line.
 - [x] Run the UI flow in Chrome with synthetic site responses: ownership, findings, proposals, approval, download, copy, revoke, reload and fresh re-audit passed on 26 Nov 2026. Light/dark layouts at 360 px and 1440 px, forced-colours emulation and print output were checked.
 - [x] Run the same main flow in Firefox: ownership, findings, approval, actual download, copy, revocation, reload and fresh re-audit passed on 26 Nov 2026. Default-colour and dark layouts at 360 px and 1440 px fit without page overflow; PDF printing included every evidence section and omitted action-button labels.
-- [ ] Finish the real-site, Safari and native Windows high-contrast checks in [ui.md](ui.md). Safari WebDriver is blocked until "Allow remote automation" is enabled in Safari Settings.
+- [x] Run the verification, audit, findings and proposal flow in Chrome against live Dayhand with real guarded network requests and no mocks. Desktop and mobile pages rendered without page errors on 26 Nov 2026. No readiness fix was approved or deployed; preserve the baseline until task labels are settled.
+- [ ] Finish real-site approval/export/deployment/re-audit, Safari and native Windows high-contrast checks in [ui.md](ui.md). Safari WebDriver is blocked until "Allow remote automation" is enabled in Safari Settings.
 - [x] Connect an MCP client once: Claude Code 2.1.332 added a temporary local MCP configuration and its health check reported Connected on 26 Nov 2026. See [mcp.md](mcp.md).
 - [ ] Optional: exercise model-driven tools through Claude Code after signing in; only its connection health check has been confirmed.
 
