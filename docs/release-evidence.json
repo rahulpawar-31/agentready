@@ -1,0 +1,108 @@
+{
+  "checked_date_utc": "2026-11-27",
+  "tested_commit": "78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+  "pull_request": "https://github.com/rahulpawar-31/agentready/pull/14",
+  "clean_checkout": {
+    "status": "passed",
+    "command": "python3 scripts/verify_checkout.py --source <local clone of this repository> --ref 78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+    "source": "explicit local clone of the merged revision",
+    "pushed_and_clean_precondition": "skipped because source and revision were explicit",
+    "clone_commit_matches_requested_revision": true,
+    "isolated_install": "passed",
+    "backend_tests": {
+      "passed": 1329,
+      "skipped": 3
+    },
+    "ui_tests": {
+      "passed": 123,
+      "failed": 0
+    },
+    "server_smoke": {
+      "passed": 5,
+      "checks": [
+        "page and CSP header",
+        "ownership instructions",
+        "wrong-method rejection",
+        "MCP initialization",
+        "exactly three MCP tools"
+      ]
+    },
+    "clone_clean_after_checks": true,
+    "final_submission_revision_check": "pending"
+  },
+  "clean_checkout_from_origin": {
+    "status": "passed",
+    "finished_at_utc": "2026-11-27T10:32:29Z",
+    "command": "python3 scripts/verify_checkout.py --ref 78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+    "source": "the repository's GitHub origin (default source)",
+    "pushed_and_clean_precondition": "not checked because the revision was given explicitly; the clone from origin shows the commit is pushed",
+    "clone_commit_matches_requested_revision": true,
+    "isolated_install": "passed",
+    "backend_tests": {
+      "passed": 1329,
+      "skipped": 3
+    },
+    "ui_tests": {
+      "passed": 123,
+      "failed": 0
+    },
+    "server_smoke": {
+      "passed": 5
+    },
+    "clone_clean_after_checks": true
+  },
+  "official_a1": {
+    "checked_at_utc": "2026-11-26T14:50:58Z",
+    "url": "https://hackathon.homingo.co.in/problem-statements",
+    "method": "live page rendered in Google Chrome; whitespace-normalized exact comparison against README quotation",
+    "a1_present": true,
+    "exact_quote_present": true,
+    "rendered_text_sha256": "69f8edbce4f5e5d187709dc32c78365f812bebeefd31bee17b22bda502f01f1e",
+    "pre_submission_recheck": "pending"
+  },
+  "benchmark_preflight": {
+    "tested_commit": "4aca7fda4226ab6488fee28ac9a0269f106b4b1f",
+    "code_matches_commit": "78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+    "code_match_basis": "git diff 78a1b3a..4aca7fd changes nothing under backend/ or benchmark/",
+    "checked_at_utc": "2026-11-27T10:43:46Z",
+    "command": "cd backend && GEMINI_API_KEY=<your key> AGENTREADY_MODEL=gemini-3.5-flash-lite python -m app.runner.preflight --format json",
+    "exit_code": 1,
+    "status": "blocked",
+    "blocked_by": [
+      "label_valid_and_committed"
+    ],
+    "warnings": [
+      "site_count: 1 of the target 5 sites registered"
+    ],
+    "criteria_committed": true,
+    "harness_hash_matches": true,
+    "model": "gemini-3.5-flash-lite",
+    "model_key_present": true,
+    "registered_sites": 1,
+    "target_sites": 5,
+    "control_proven": "skipped (run without --check-control)",
+    "control_verified": [],
+    "missing_labels": [
+      "benchmark/labels/personal-ai-blue.vercel.app.json"
+    ],
+    "task_runs_collected": 0,
+    "readiness_fixes_deployed": false,
+    "measured_demo_recorded": false
+  },
+  "benchmark_ownership_check": {
+    "checked_date_utc": "2026-11-26",
+    "tested_commit": "not recorded",
+    "command": "cd backend && AGENTREADY_SECRET=<the API server's secret> GEMINI_API_KEY=<your key> AGENTREADY_MODEL=gemini-3.5-flash-lite python -m app.runner.preflight --check-control --format json",
+    "exit_code": 1,
+    "status": "blocked",
+    "control_verified": [
+      "personal-ai-blue.vercel.app"
+    ],
+    "note": "ownership result only; not repeated on 2026-11-27 because AGENTREADY_SECRET was not available"
+  },
+  "required_inputs": [
+    "Four additional public origins controlled by the team, or covered by written permission",
+    "Suitable public offer/pricing and contact-form URLs for Dayhand, or a replacement eligible site",
+    "Independent hand labels for every task and expected audit-check outcomes for both planned snapshots"
+  ]
+}
