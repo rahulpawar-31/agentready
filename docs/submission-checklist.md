@@ -26,7 +26,7 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 
 - [x] `cd backend && pytest` passes: 1,329 passed, 3 live tests skipped on merged commit `78a1b3a` on 26 Nov 2026; the Gemini live test passed separately earlier that day.
 - [x] `cd backend && node --test tests/ui/*.test.mjs` passes: 123 passed on 26 Nov 2026 (needs Node 20 or newer).
-- [x] `python scripts/verify_checkout.py --ref <your pushed branch or commit>` passes on a fresh clone: merged revision `78a1b3aa59acab038ea0a618bac9c1b96a90a1f4` passed clone, isolated installation, Python/UI tests, five server smoke checks and clean-tree checks on 26 Nov 2026. The check used an explicit local clone of that exact merged revision; the pushed/clean precondition was skipped and the clone was checked clean afterward. See [release-evidence.json](release-evidence.json). Repeat for the final submission revision.
+- [x] `python scripts/verify_checkout.py --ref <your pushed branch or commit>` passes on a fresh clone: merged revision `78a1b3aa59acab038ea0a618bac9c1b96a90a1f4` passed clone, isolated installation, Python/UI tests, five server smoke checks and clean-tree checks from a local clone on 26 Nov 2026, and again cloned from the GitHub origin (the default source) on 27 Nov 2026: 1,329 Python tests passed with 3 skipped, 123 UI tests passed. Because the revision was given explicitly, the script did not run its pushed/clean precondition; the successful clone from origin shows the commit is pushed. See [release-evidence.json](release-evidence.json). Repeat for the final submission revision.
 - [ ] `python -m app.runner.report --before before --after after` runs with no "Data issues".
 - [ ] The README says "Not yet measured" only until the report exists; then link or copy the real report, with its sample-size line.
 - [x] Run the UI flow in Chrome with synthetic site responses: ownership, findings, proposals, approval, download, copy, revoke, reload and fresh re-audit passed on 26 Nov 2026. Light/dark layouts at 360 px and 1440 px, forced-colours emulation and print output were checked.
@@ -36,15 +36,21 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 - [x] Connect an MCP client once: Claude Code 2.1.332 added a temporary local MCP configuration and its health check reported Connected on 26 Nov 2026. See [mcp.md](mcp.md).
 - [ ] Optional: exercise model-driven tools through Claude Code after signing in; only its connection health check has been confirmed.
 
-## Do not claim
+## Benchmark preflight status
 
-The latest real `preflight --check-control` still blocks benchmark collection: only one of the target five sites is
-registered, and `benchmark/labels/personal-ai-blue.vercel.app.json` does not exist. Dayhand ownership passed, the
-Gemini key was present, and the committed criteria matched the harness. A sign-in form cannot supply the missing
-public contact-form label. Supply the four other controlled origins and the correct public task URLs before
-collection; independently commit both audit expectation maps before running anything. After collection, the owner
-must approve and explicitly export the fixes, deploy them, and rerun the same tasks before the measured demo can
-be recorded. No task run, readiness-fix deployment or measured demo was performed by this release check.
+Preflight still blocks benchmark collection: only one of the target five sites is registered, and
+`benchmark/labels/personal-ai-blue.vercel.app.json` does not exist. A `--check-control` run on 26 Nov 2026 verified
+Dayhand ownership. On 27 Nov 2026, at commit `4841d0b` (code identical to `78a1b3a`), preflight confirmed the Gemini
+key was present and the committed criteria matched the harness. See [release-evidence.json](release-evidence.json).
+No task run, readiness-fix deployment or measured demo has been performed.
+
+Still to do before collection:
+
+- [ ] Supply the four other controlled origins and the correct public task URLs. A sign-in form cannot supply the missing public contact-form label.
+- [ ] Independently commit both audit expectation maps before running anything.
+- [ ] After collection, the owner approves and explicitly exports the fixes, deploys them, and reruns the same tasks; only then can the measured demo be recorded.
+
+## Do not claim
 
 - Results for sites that were not tested, or any effect on agents in general.
 - Audit-check accuracy (there are no hand-labelled audit outcomes).

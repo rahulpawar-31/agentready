@@ -4,19 +4,52 @@
   "pull_request": "https://github.com/rahulpawar-31/agentready/pull/14",
   "clean_checkout": {
     "status": "passed",
-    "command": "python3 scripts/verify_checkout.py --source /Users/sozoadmin/Rahul/agentready --ref 78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+    "command": "python3 scripts/verify_checkout.py --source <local clone of this repository> --ref 78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
     "source": "explicit local clone of the merged revision",
     "pushed_and_clean_precondition": "skipped because source and revision were explicit",
     "clone_commit_matches_requested_revision": true,
     "isolated_install": "passed",
-    "backend_tests": {"passed": 1329, "skipped": 3},
-    "ui_tests": {"passed": 123, "failed": 0},
+    "backend_tests": {
+      "passed": 1329,
+      "skipped": 3
+    },
+    "ui_tests": {
+      "passed": 123,
+      "failed": 0
+    },
     "server_smoke": {
       "passed": 5,
-      "checks": ["page and CSP header", "ownership instructions", "wrong-method rejection", "MCP initialization", "exactly three MCP tools"]
+      "checks": [
+        "page and CSP header",
+        "ownership instructions",
+        "wrong-method rejection",
+        "MCP initialization",
+        "exactly three MCP tools"
+      ]
     },
     "clone_clean_after_checks": true,
-    "repeat_on_final_submission_revision": true
+    "final_submission_revision_check": "pending"
+  },
+  "clean_checkout_from_origin": {
+    "status": "passed",
+    "finished_at_utc": "2026-11-27T10:32:29Z",
+    "command": "python3 scripts/verify_checkout.py --ref 78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+    "source": "the repository's GitHub origin (default source)",
+    "pushed_and_clean_precondition": "not checked because the revision was given explicitly; the clone from origin shows the commit is pushed",
+    "clone_commit_matches_requested_revision": true,
+    "isolated_install": "passed",
+    "backend_tests": {
+      "passed": 1329,
+      "skipped": 3
+    },
+    "ui_tests": {
+      "passed": 123,
+      "failed": 0
+    },
+    "server_smoke": {
+      "passed": 5
+    },
+    "clone_clean_after_checks": true
   },
   "official_a1": {
     "checked_at_utc": "2026-11-26T14:50:58Z",
@@ -25,10 +58,15 @@
     "a1_present": true,
     "exact_quote_present": true,
     "rendered_text_sha256": "69f8edbce4f5e5d187709dc32c78365f812bebeefd31bee17b22bda502f01f1e",
-    "repeat_immediately_before_submission": true
+    "pre_submission_recheck": "pending"
   },
   "benchmark_preflight": {
-    "command": "python -m app.runner.preflight --check-control --format json",
+    "tested_commit": "4841d0b576c1f7f1dc023c91e2cfd7ff36bf6da9",
+    "code_matches_commit": "78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
+    "code_match_basis": "git diff 78a1b3a..4841d0b changes only README.md and docs/",
+    "checked_at_utc": "2026-11-27T10:32:24Z",
+    "command": "AGENTREADY_MODEL=gemini-3.5-flash-lite python -m app.runner.preflight --format json",
+    "control_check": "not repeated on 2026-11-27 (needs AGENTREADY_SECRET); the earlier --check-control run on 2026-11-26 verified Dayhand control, and its commit was not recorded",
     "exit_code": 1,
     "status": "blocked",
     "criteria_committed": true,
@@ -37,8 +75,12 @@
     "model_key_present": true,
     "registered_sites": 1,
     "target_sites": 5,
-    "control_verified": ["personal-ai-blue.vercel.app"],
-    "missing_labels": ["benchmark/labels/personal-ai-blue.vercel.app.json"],
+    "control_verified": [
+      "personal-ai-blue.vercel.app"
+    ],
+    "missing_labels": [
+      "benchmark/labels/personal-ai-blue.vercel.app.json"
+    ],
     "task_runs_collected": 0,
     "readiness_fixes_deployed": false,
     "measured_demo_recorded": false
