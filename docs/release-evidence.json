@@ -1,5 +1,5 @@
 {
-  "checked_date_utc": "2026-11-26",
+  "checked_date_utc": "2026-11-27",
   "tested_commit": "78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
   "pull_request": "https://github.com/rahulpawar-31/agentready/pull/14",
   "clean_checkout": {
@@ -61,29 +61,44 @@
     "pre_submission_recheck": "pending"
   },
   "benchmark_preflight": {
-    "tested_commit": "4841d0b576c1f7f1dc023c91e2cfd7ff36bf6da9",
+    "tested_commit": "4aca7fda4226ab6488fee28ac9a0269f106b4b1f",
     "code_matches_commit": "78a1b3aa59acab038ea0a618bac9c1b96a90a1f4",
-    "code_match_basis": "git diff 78a1b3a..4841d0b changes only README.md and docs/",
-    "checked_at_utc": "2026-11-27T10:32:24Z",
-    "command": "AGENTREADY_MODEL=gemini-3.5-flash-lite python -m app.runner.preflight --format json",
-    "control_check": "not repeated on 2026-11-27 (needs AGENTREADY_SECRET); the earlier --check-control run on 2026-11-26 verified Dayhand control, and its commit was not recorded",
+    "code_match_basis": "git diff 78a1b3a..4aca7fd changes nothing under backend/ or benchmark/",
+    "checked_at_utc": "2026-11-27T10:43:46Z",
+    "command": "cd backend && GEMINI_API_KEY=<your key> AGENTREADY_MODEL=gemini-3.5-flash-lite python -m app.runner.preflight --format json",
     "exit_code": 1,
     "status": "blocked",
+    "blocked_by": [
+      "label_valid_and_committed"
+    ],
+    "warnings": [
+      "site_count: 1 of the target 5 sites registered"
+    ],
     "criteria_committed": true,
     "harness_hash_matches": true,
     "model": "gemini-3.5-flash-lite",
     "model_key_present": true,
     "registered_sites": 1,
     "target_sites": 5,
-    "control_verified": [
-      "personal-ai-blue.vercel.app"
-    ],
+    "control_proven": "skipped (run without --check-control)",
+    "control_verified": [],
     "missing_labels": [
       "benchmark/labels/personal-ai-blue.vercel.app.json"
     ],
     "task_runs_collected": 0,
     "readiness_fixes_deployed": false,
     "measured_demo_recorded": false
+  },
+  "benchmark_ownership_check": {
+    "checked_date_utc": "2026-11-26",
+    "tested_commit": "not recorded",
+    "command": "cd backend && AGENTREADY_SECRET=<the API server's secret> GEMINI_API_KEY=<your key> AGENTREADY_MODEL=gemini-3.5-flash-lite python -m app.runner.preflight --check-control --format json",
+    "exit_code": 1,
+    "status": "blocked",
+    "control_verified": [
+      "personal-ai-blue.vercel.app"
+    ],
+    "note": "ownership result only; not repeated on 2026-11-27 because AGENTREADY_SECRET was not available"
   },
   "required_inputs": [
     "Four additional public origins controlled by the team, or covered by written permission",

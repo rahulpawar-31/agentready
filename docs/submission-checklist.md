@@ -17,7 +17,8 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 - [ ] Run the before runs, the fixes and deploys, the after runs, and the report. See [benchmark.md](benchmark.md).
 - [ ] Commit the results under `benchmark/results/` and the report (`benchmark/evaluation.md`, `benchmark/evaluation.json`).
 - [ ] Record the 3-minute video following [demo-script.md](demo-script.md).
-- [x] Re-check the A1 quotation in the README against the live Homingo problem-statements page. It matched the [official page](https://hackathon.homingo.co.in/problem-statements) rendered in Chrome again at 14:50 UTC on 26 Nov 2026. See [release-evidence.json](release-evidence.json). Re-check just before actual submission; if a later check differs, **remove the quotation** instead of rewording it.
+- [x] Re-check the A1 quotation in the README against the live Homingo problem-statements page. It matched the [official page](https://hackathon.homingo.co.in/problem-statements) rendered in Chrome again at 14:50 UTC on 26 Nov 2026. See [release-evidence.json](release-evidence.json).
+- [ ] Re-check the A1 quotation again just before actual submission. If it differs, **remove the quotation** instead of rewording it.
 - [x] Make the GitHub repository public. GitHub metadata confirmed public visibility on 26 Nov 2026.
 - [ ] Add the recorded demo video link to the README.
 - [ ] Submit on 5 Dec.
@@ -26,7 +27,8 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 
 - [x] `cd backend && pytest` passes: 1,329 passed, 3 live tests skipped on merged commit `78a1b3a` on 26 Nov 2026; the Gemini live test passed separately earlier that day.
 - [x] `cd backend && node --test tests/ui/*.test.mjs` passes: 123 passed on 26 Nov 2026 (needs Node 20 or newer).
-- [x] `python scripts/verify_checkout.py --ref <your pushed branch or commit>` passes on a fresh clone: merged revision `78a1b3aa59acab038ea0a618bac9c1b96a90a1f4` passed clone, isolated installation, Python/UI tests, five server smoke checks and clean-tree checks from a local clone on 26 Nov 2026, and again cloned from the GitHub origin (the default source) on 27 Nov 2026: 1,329 Python tests passed with 3 skipped, 123 UI tests passed. Because the revision was given explicitly, the script did not run its pushed/clean precondition; the successful clone from origin shows the commit is pushed. See [release-evidence.json](release-evidence.json). Repeat for the final submission revision.
+- [x] `python scripts/verify_checkout.py --ref <your pushed branch or commit>` passes on a fresh clone: merged revision `78a1b3aa59acab038ea0a618bac9c1b96a90a1f4` passed clone, isolated installation, Python/UI tests, five server smoke checks and clean-tree checks from a local clone on 26 Nov 2026, and again cloned from the GitHub origin (the default source) on 27 Nov 2026: 1,329 Python tests passed with 3 skipped, 123 UI tests passed. Because the revision was given explicitly, the script did not run its pushed/clean precondition; the successful clone from origin shows the commit is pushed. See [release-evidence.json](release-evidence.json).
+- [ ] Run `python scripts/verify_checkout.py --ref <final submission commit>` on the final submission revision.
 - [ ] `python -m app.runner.report --before before --after after` runs with no "Data issues".
 - [ ] The README says "Not yet measured" only until the report exists; then link or copy the real report, with its sample-size line.
 - [x] Run the UI flow in Chrome with synthetic site responses: ownership, findings, proposals, approval, download, copy, revoke, reload and fresh re-audit passed on 26 Nov 2026. Light/dark layouts at 360 px and 1440 px, forced-colours emulation and print output were checked.
@@ -38,10 +40,11 @@ clean-checkout run **4 Dec**; blockers and **submit on 5 Dec**; the window close
 
 ## Benchmark preflight status
 
-Preflight still blocks benchmark collection: only one of the target five sites is registered, and
-`benchmark/labels/personal-ai-blue.vercel.app.json` does not exist. A `--check-control` run on 26 Nov 2026 verified
-Dayhand ownership. On 27 Nov 2026, at commit `4841d0b` (code identical to `78a1b3a`), preflight confirmed the Gemini
-key was present and the committed criteria matched the harness. See [release-evidence.json](release-evidence.json).
+Preflight still blocks benchmark collection because `benchmark/labels/personal-ai-blue.vercel.app.json` does not
+exist. Only one of the target five sites is registered; preflight reports that as a warning, not a block, so the
+five-site target is a plan target that preflight does not enforce. A `--check-control` run on 26 Nov 2026 verified
+Dayhand ownership. On 27 Nov 2026, at commit `4aca7fd` (backend and benchmark identical to `78a1b3a`), preflight run
+without `--check-control` confirmed the Gemini key was present and the committed criteria matched the harness. See [release-evidence.json](release-evidence.json).
 No task run, readiness-fix deployment or measured demo has been performed.
 
 Still to do before collection:
