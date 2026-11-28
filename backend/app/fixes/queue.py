@@ -82,7 +82,7 @@ class FixQueue:
         if problems:
             raise NotApproved(f"The fix no longer passes validation: {problems[0]}")
         added = fix.added if fix.added is not None else added_lines(fix.diff)
-        labels = find_secrets(fix.content) or find_secrets(added)
+        labels = find_secrets(fix.content) or find_secrets(fix.diff) or find_secrets(added)
         if labels:
             raise NotApproved(f"The fix contains a secret-like value ({labels[0]})")
         note = "Review before you deploy. AgentReady has not changed your site."

@@ -6,10 +6,12 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from ..audit import parse_url
-from ..fetch import is_no_store
+from ..fetch import forbid_sensitive_paths, is_no_store
+from ..models import Page
 from .judge import Answer
 from .labels import fetch_key, normalise_url
 
+FETCH_POLICY_VERSION = 2     # sensitive paths blocked on every redirect and on final/cache responses
 TEXT_CLIP = 6000
 JSONLD_CLIP = 4000
 LINK_LIMIT = 40
@@ -65,6 +67,7 @@ class ToolBox:
         ref = parse_url(origin)
         self.origin, self.host = ref.origin, ref.netloc
         self._fetcher = fetcher
+        forbid_sensitive_paths(fetcher)
         self.step_limit = step_limit
         self.steps = 0
         self.blocked = 0
@@ -129,6 +132,13 @@ class ToolBox:
     def _get(self, url: str):
         page = self._fetcher.get(url)
         self.fetched.append(url)
+        # Cached or injected fetchers may return a final URL without invoking the guard.
+        try:
+            safe = self._same_host(page.url or url) and not is_no_store(page.url or url)
+        except ValueError:
+            safe = False
+        if not safe:
+            page = Page(url, 0, {}, "", error="blocked: the final response is not an allowed task page")
         guard_block = page.status == 0 and page.error.startswith("blocked:") and "could not resolve" not in page.error
         if page.status != 0:
             self.looked = True

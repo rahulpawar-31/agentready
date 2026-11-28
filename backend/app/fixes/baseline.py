@@ -1,6 +1,8 @@
 import json
 from dataclasses import dataclass
 
+from ..fetch import is_no_store
+
 SPEC_PATHS = ("/openapi.json", "/swagger.json", "/.well-known/openapi.json")
 BASELINE_PATHS = ("/", "/llms.txt") + SPEC_PATHS
 
@@ -19,11 +21,11 @@ class Baseline:
     @classmethod
     def from_recorder(cls, origin: str, recorder: "RecordingFetcher") -> "Baseline":
         """The pages the audit itself read, as the audit saw them. Nothing is requested again: a path the audit
-        did not request, or could not reach (status 0), is simply absent."""
+        did not request, could not reach (status 0), or resolved to a sensitive path is absent."""
         pages = {}
         for path in BASELINE_PATHS:
             page = recorder.pages.get(origin.rstrip("/") + path)
-            if page is not None and page.status != 0:
+            if page is not None and page.status != 0 and not is_no_store(page.url):
                 pages[path] = (page.status, page.body)
         return cls(origin, pages)
 
@@ -46,16 +48,17 @@ class Baseline:
 
 
 def capture_baseline(origin: str, fetcher) -> Baseline:
-    """GET the five known paths through the audit's fetcher (cache hits after an audit). Only calls `get`."""
+    """GET the five known paths through the audit's fetcher, excluding sensitive final responses from the baseline."""
     pages = {}
     for path in BASELINE_PATHS:
         p = fetcher.get(origin.rstrip("/") + path)
-        pages[path] = (p.status, p.body)
+        if not is_no_store(p.url):
+            pages[path] = (p.status, p.body)
     return Baseline(origin, pages)
 
 
 class RecordingFetcher:
-    """Wraps the audit's fetcher and remembers the Page it returned for each URL. It only calls `inner.get`."""
+    """Return pages to audit checks, retaining only non-sensitive responses for fix generation."""
 
     def __init__(self, inner):
         self._inner = inner
@@ -63,5 +66,8 @@ class RecordingFetcher:
 
     def get(self, url: str, *, rendered: bool = False):
         page = self._inner.get(url, rendered=rendered)
-        self.pages[url] = page
+        if is_no_store(url) or is_no_store(page.url):
+            self.pages.pop(url, None)
+        else:
+            self.pages[url] = page
         return page

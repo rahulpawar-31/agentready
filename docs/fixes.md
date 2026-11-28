@@ -41,15 +41,16 @@ contains the value that caused it.
   verified origin, never a `servers` URL from the spec. The page title is the `<title>` inside `<head>`, not one
   inside an inline SVG.
 - **Secrets.** Text from the site is checked for secret-like values as the site wrote it, before any clean-up.
-  What the fix generates (its content, and the diff's added lines that are not simply the owner's page again) is
+  The generated content and the entire displayed/exported diff, including existing context and removed lines, are
   checked again. The scanner recognises private key blocks, AWS, GitHub, Slack, Stripe, Google, Twilio, SendGrid and
   npm credentials, `sk-` keys, JWTs, `NAME=value` and `"name": "value"` assignments for names containing password,
   secret, token, key or credential, Bearer and Basic authorization headers, and passwords inside URLs, also after URL
   decoding and with invisible characters removed. It is a heuristic and not a guarantee: other formats can pass.
-  A fix whose generated text looks like a secret is skipped; a link whose text or address looks like a secret is
-  left out. The existing page is the owner's own, so a secret-like value that is only in the existing page (for
-  example a public Supabase anon key) does not block anything: the fix carries a `warning` ("the existing page
-  contains a secret-like value (jwt); AgentReady did not copy it"). Scanners return labels only, never values.
+  A fix whose content or diff looks like it contains a secret is skipped; a link whose text or address looks like a
+  secret is left out. This is conservative: even a public JWT in diff context blocks that patch. Secret-like text
+  elsewhere on the existing page, outside the diff, carries a warning without quoting the value. Export scans the
+  entire diff again. Responses resolving to `/.env` or `/.git/` are excluded from fix baselines. Scanners return
+  labels only, never values.
 - **Validated before anyone sees it.** `llms.txt` must have the right structure and only on-site links. The JSON-LD
   must be one `application/ld+json` script that parses and has `@context` and `@type`. The stub must parse, run no
   code at import, match the spec's GET operations, and its code is inspected: every call, name and import in every

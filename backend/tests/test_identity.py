@@ -64,11 +64,13 @@ def test_scheme_types_in_evidence_are_clipped_and_cleaned():
 
 
 @pytest.mark.parametrize("status", [0, 503])
-def test_if_some_standard_paths_could_not_be_fetched_absence_is_low_confidence(status):
+def test_if_some_standard_paths_could_not_be_fetched_the_combined_check_is_unreachable(status):
     pages = {f"{B}/swagger.json": page(f"{B}/swagger.json", status=status)}
     r = {f.check_id: f for f in identity.run(Site(B, FakeFetcher(pages)))}["openapi_public"]
     assert not r.passed and r.confidence is Confidence.LOW
-    assert "1 of 3" in r.evidence and "uncertain" in r.evidence
+    assert r.status is Status.UNREACHABLE and r.url == f"{B}/swagger.json"
+    expected = "Could not fetch" if status == 0 else "Server error 503"
+    assert expected in r.evidence
 
 
 def test_when_every_path_answered_absence_keeps_medium_confidence():

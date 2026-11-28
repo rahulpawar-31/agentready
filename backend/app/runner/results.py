@@ -37,6 +37,7 @@ def harness_sha256() -> str:
         "min_quote_chars": judge.MIN_QUOTE_CHARS,
         "judge_version": judge.JUDGE_VERSION,
         "request_log_version": REQUEST_LOG_VERSION,
+        "fetch_policy_version": tools.FETCH_POLICY_VERSION,
         "step_limit": tasks.STEP_LIMIT,
         "max_turns": tasks.MAX_TURNS,
         "max_tokens": llm.MAX_TOKENS,
