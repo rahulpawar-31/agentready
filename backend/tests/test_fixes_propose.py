@@ -96,12 +96,13 @@ def test_a_secret_in_site_text_skips_the_fix_and_the_value_never_appears():
     assert secret not in "".join(x.content + x.diff for x in p.fixes) + "".join(s.reason for s in p.skipped)
 
 
-def test_a_secret_only_in_the_home_page_context_is_a_warning_not_a_block():
+def test_a_secret_in_home_page_diff_context_skips_the_patch_without_exposing_it():
     secret = "AKIA" + "ABCDEFGHIJKLMNOP"
     p, _ = run({"/": HOME_ML.replace("<body>", f"<body>\n{secret}")})
-    ld = next(x for x in p.fixes if x.kind is FixKind.JSON_LD)
-    assert "aws access key" in ld.warning and secret not in ld.warning and secret not in ld.content
-    assert all(find_secrets(x.content) == [] for x in p.fixes)
+    assert FixKind.JSON_LD not in kinds(p)[0]
+    assert "aws access key" in kinds(p)[1][FixKind.JSON_LD]
+    assert all(find_secrets(x.content) == [] and find_secrets(x.diff) == [] for x in p.fixes)
+    assert secret not in str(p)
 
 
 def test_a_page_whose_diff_would_be_too_large_gets_an_excerpt_not_a_skip():
@@ -171,7 +172,7 @@ def test_proposing_makes_no_request_and_writes_no_file(monkeypatch):
     assert [x.id for x in p.fixes] == ["llms_txt", "json_ld", "mcp_stub"] and len(f.calls) == calls
 
 
-# --- Group B: secrets are checked in the text a site supplies and in what is generated, not in page context
+# --- Group B: site text, generated output and all displayed diff context are checked for secrets
 def _g(n):
     return ("a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0" * 3)[:n]
 
@@ -217,13 +218,12 @@ def test_b_a_secret_in_an_openapi_summary_skips_only_the_stub():
     assert [x.kind for x in p.fixes] == [FixKind.LLMS_TXT, FixKind.JSON_LD]
 
 
-def test_i1_a_public_jwt_in_the_page_does_not_block_either_fix_and_is_flagged_as_a_warning():
+def test_i1_a_public_jwt_in_diff_context_skips_json_ld_but_keeps_the_clean_summary():
     jwt = "eyJhbGciOiJIUzI1NiJ9." + "eyJyb2xlIjoiYW5vbiJ9." + "c2lnbmF0dXJlMTIzNDU2"
     p, _ = run({"/": home_with(extra_body=f"<script>var supabaseKey = '{jwt}';</script>")})
-    assert [x.kind for x in p.fixes] == [FixKind.LLMS_TXT, FixKind.JSON_LD]
-    ld = p.fixes[1]
-    assert "jwt" in ld.warning and "did not copy it" in ld.warning and jwt not in ld.warning
-    assert jwt in ld.diff                                    # the page's own line is shown as context, as before
+    assert [x.kind for x in p.fixes] == [FixKind.LLMS_TXT]
+    assert "jwt" in kinds(p)[1][FixKind.JSON_LD]
+    assert jwt not in str(p)
     assert p.fixes[0].warning == ""
 
 

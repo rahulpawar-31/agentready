@@ -132,7 +132,7 @@ class GuardedFetcher:
 
     def __init__(self, plain: Fetcher, host: str, *, resolver=default_resolver,
                  min_interval: float = 0.5, max_redirects: int = 5, max_requests: int = 60,
-                 clock=time.monotonic, sleep=time.sleep):
+                 clock=time.monotonic, sleep=time.sleep, allow_sensitive_paths: bool = True):
         if getattr(plain, "follows_redirects", False):
             raise ValueError("the plain fetcher must not follow redirects on its own")
         self._plain = plain
@@ -143,6 +143,11 @@ class GuardedFetcher:
         self._clock, self._sleep = clock, sleep
         self._last: float | None = None
         self._request_log: list[dict] = []
+        self._allow_sensitive_paths = allow_sensitive_paths
+
+    def forbid_sensitive_paths(self) -> None:
+        """Tighten a task run's guard; deterministic audits retain their two explicit security probes."""
+        self._allow_sensitive_paths = False
 
     @property
     def requests_used(self) -> int:
@@ -173,6 +178,8 @@ class GuardedFetcher:
         for _ in range(self._max + 1):
             if not self._inside(url):
                 return self._blocked(url, f"blocked: {url} is outside the verified site {self.host}")
+            if not self._allow_sensitive_paths and is_no_store(url):
+                return self._blocked(url, "blocked: sensitive paths cannot be fetched")
             if self._used >= self._budget:
                 return self._blocked(url, f"blocked: request budget of {self._budget} used up")
             addrs = self._resolve(urlparse(url).hostname or "")
@@ -201,6 +208,18 @@ class GuardedFetcher:
         else:
             return self._blocked(url, f"blocked: more than {self._max} redirects")
         return page
+
+
+def forbid_sensitive_paths(fetcher) -> None:
+    """Apply the task runner policy to its real guard, including behind cache/recording wrappers."""
+    node = fetcher
+    for _ in range(5):
+        if isinstance(node, GuardedFetcher):
+            node.forbid_sensitive_paths()
+            return
+        node = getattr(node, "_inner", None)
+        if node is None:
+            return
 
 
 def request_log_for(fetcher) -> list[dict] | None:

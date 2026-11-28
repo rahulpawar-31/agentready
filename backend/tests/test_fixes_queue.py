@@ -121,14 +121,15 @@ def test_duplicate_fix_ids_are_refused():
         FixQueue([fix(), fix()], {})
 
 
-def test_b_export_scans_the_content_and_added_lines_but_not_the_context_lines():
+def test_b_export_scans_the_content_and_all_diff_lines_including_context():
     jwt = "eyJhbGciOiJIUzI1NiJ9." + "eyJyb2xlIjoiYW5vbiJ9." + "c2lnbmF0dXJlMTIzNDU2"
     context = fix(content="# Acme\n> hi\n")
     context.diff = f"--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n var k = '{jwt}';\n+# Acme\n </head>\n"
     context.added = "# Acme"
     q = queue(context)
     q.approve("llms_txt")
-    assert q.export("llms_txt").content == "# Acme\n> hi\n"            # a public token in page context does not block it
+    with pytest.raises(NotApproved, match="secret-like"):
+        q.export("llms_txt")
     added = fix(content="# Acme\n> hi\n")
     added.diff = f"--- a/x\n+++ b/x\n@@ -1,1 +1,2 @@\n+key {'AKIA' + 'ABCDEFGHIJKLMNOP'}\n"
     added.added = "key " + "AKIA" + "ABCDEFGHIJKLMNOP"

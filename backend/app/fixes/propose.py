@@ -70,11 +70,10 @@ def _finding(report: Report, check_id: str):
 
 
 def _problem(content: str, diff: str, problems: list, added: str):
-    """Only what AgentReady generates is checked for secrets: the content and the diff's added lines. The existing
-    page shown as context is the owner's own and is not part of the output."""
+    """Everything presented or exported is scanned, including existing context and removed diff lines."""
     if problems:
         return f"failed validation: {problems[0]}"
-    labels = find_secrets(content) or find_secrets(added)
+    labels = find_secrets(content) or find_secrets(diff) or find_secrets(added)
     if labels:
         return f"contains a secret-like value ({labels[0]})"
     if len(diff) > DIFF_MAX_CHARS:

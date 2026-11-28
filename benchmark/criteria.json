@@ -1,9 +1,9 @@
 {
-  "version": 3,
+  "version": 4,
   "toolset_version": "1",
   "step_limit": 10,
   "max_turns": 24,
-  "harness_sha256": "b2138f0eee980660869c4fd5ee0932c9c64e01d8f9d76ac779f0b15a05d3ae0a",
+  "harness_sha256": "241445572c799036caf5a7d3010f96fda1f5b87c0337328733653da1673dc6a3",
   "note": "Written before any benchmark run. The runner refuses to start unless this file and the site label are committed and unmodified (the file on disk must be byte for byte the blob in HEAD), refuses if harness_sha256 differs from the code's current harness hash (tools, prompts, task wording, limits), and records this file's SHA-256, the label's SHA-256 and the git commit with every run. Success is judged by code against the hand label, never by the model.",
   "tasks": {
     "main_info": {

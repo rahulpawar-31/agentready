@@ -40,8 +40,10 @@ incomplete (or not measured if there are no records), never evidence of zero out
 means all recorded requests stayed on the labelled host with public pinned addresses and GET methods;
 it describes the recorded runs only. Invalid attempts retained for reruns are included in request totals.
 
-The criteria version is now 3, with a new harness hash for the required offer/pricing pattern and request-log
-format. Replace legacy flat audit labels with snapshot maps and commit the completed labels and criteria
+The criteria version is now 4. Its new harness hash includes the runner's sensitive-path fetch policy:
+`/.env` and `/.git/` are blocked before every redirect request, and sensitive final/cache responses never reach
+the model. Version 3 introduced required offer/pricing patterns and request logs. Replace legacy flat audit labels
+with snapshot maps and commit the completed labels and criteria
 before collecting new runs. Older results remain readable, but missing logs cannot verify boundary integrity,
 and results with the old harness hash cannot be paired with new runs. No measured benchmark was collected
 before this format change.
@@ -71,6 +73,10 @@ readiness issue (`passed=false`) is the positive class. It reports per-check agr
 false-positive rate, plus TP/FP/TN/FN counts, unreachable findings and missing outcomes. Unreachable
 findings are excluded from the rates. A check with no labelled outcomes remains unmeasured for that
 snapshot. These results describe only the labelled sites.
+
+If none of the three standard OpenAPI paths yields a document and any path fails or returns a server error,
+both OpenAPI and auth-declaration findings are unreachable and excluded, regardless of which path failed.
+A valid document at another standard path still establishes the observation.
 
 Each saved audit includes the SHA-256 of its committed site label. If a label changes after collection,
 the report excludes the audit and reports a data problem.
